@@ -18,12 +18,12 @@ Example:
 import re
 import sys
 import argparse
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, Tuple, Any, cast
 from dataclasses import dataclass
 from pathlib import Path
-import sqlparse
-from sqlparse.sql import IdentifierList, Identifier
-from sqlparse.tokens import Keyword, DML
+import sqlparse  # type: ignore
+from sqlparse.sql import IdentifierList, Identifier  # type: ignore
+from sqlparse.tokens import Keyword, DML  # type: ignore
 import json
 from datetime import datetime
 
@@ -55,7 +55,7 @@ class LineageInfo:
 class ETLLineageAnalyzer:
     """Analyzes ETL scripts to extract data lineage information"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.sql_keywords = {
             "CREATE",
             "INSERT",
@@ -321,7 +321,7 @@ class ETLLineageAnalyzer:
                 operations.append(operation)
         return operations
 
-    def _split_sql_statements_with_offsets(self, sql_block: str):
+    def _split_sql_statements_with_offsets(self, sql_block: str) -> List[Tuple[str, int]]:
         """Split SQL block into statements and return (statement, char_offset) tuples."""
         sql_clean = re.sub(r"--.*$", "", sql_block, flags=re.MULTILINE)
         sql_clean = re.sub(r"/\*.*?\*/", "", sql_clean, flags=re.DOTALL)
@@ -472,7 +472,7 @@ class ETLLineageAnalyzer:
 
         return list(tables)
 
-    def _extract_tables_from_tokenlist(self, tokens) -> List[str]:
+    def _extract_tables_from_tokenlist(self, tokens: Any) -> List[str]:
         """Recursively extract table names from a sqlparse TokenList, handling subqueries."""
         tables = []
         from_seen = False
@@ -536,12 +536,12 @@ class ETLLineageAnalyzer:
                 from_seen = True
         return tables
 
-    def _is_identifier(self, token):
+    def _is_identifier(self, token: Any) -> bool:
         return isinstance(token, Identifier) or (
             token.ttype is None and hasattr(token, "get_real_name")
         )
 
-    def _get_identifier_name(self, identifier):
+    def _get_identifier_name(self, identifier: Any) -> Optional[str]:
         # Return the full name including schema if present, skip subqueries
         if (
             hasattr(identifier, "is_group")
@@ -555,8 +555,10 @@ class ETLLineageAnalyzer:
         if hasattr(identifier, "get_parent_name") and identifier.get_parent_name():
             return f"{identifier.get_parent_name()}.{identifier.get_real_name()}"
         if hasattr(identifier, "get_real_name") and identifier.get_real_name():
-            return identifier.get_real_name()
-        return str(identifier)
+            return str(identifier.get_real_name())
+        if identifier is not None:
+            return str(identifier)
+        return None
 
     def _extract_source_tables_from_select(self, statement: str) -> List[str]:
         """Extract source tables from SELECT statement, recursively."""
@@ -568,12 +570,12 @@ class ETLLineageAnalyzer:
 
     def analyze_script(self, script_path: str) -> LineageInfo:
         """Analyze an ETL script and extract lineage information"""
-        script_path = Path(script_path)
+        script_path_obj = Path(script_path)
 
-        if not script_path.exists():
-            raise FileNotFoundError(f"Script file not found: {script_path}")
+        if not script_path_obj.exists():
+            raise FileNotFoundError(f"Script file not found: {script_path_obj}")
 
-        with open(script_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(script_path_obj, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
         # Extract SQL blocks
@@ -602,14 +604,14 @@ class ETLLineageAnalyzer:
                 source_tables.update(operation.source_tables)
 
         # Build table relationships
-        table_relationships = {}
+        table_relationships: Dict[str, List[str]] = {}
         for operation in operations:
             if operation.target_table not in table_relationships:
                 table_relationships[operation.target_table] = []
             table_relationships[operation.target_table].extend(operation.source_tables)
 
         return LineageInfo(
-            script_name=script_path.name,
+            script_name=script_path_obj.name,
             volatile_tables=volatile_tables,
             source_tables=source_tables,
             target_tables=target_tables,
@@ -617,7 +619,7 @@ class ETLLineageAnalyzer:
             table_relationships=table_relationships,
         )
 
-    def print_lineage_report(self, lineage_info: LineageInfo):
+    def print_lineage_report(self, lineage_info: LineageInfo) -> None:
         """Print a comprehensive lineage report"""
         print("=" * 80)
         print(f"ETL LINEAGE ANALYSIS REPORT")
@@ -661,13 +663,13 @@ class ETLLineageAnalyzer:
         print("\n🔄 DATA FLOW:")
         self._print_data_flow(lineage_info)
 
-    def _print_data_flow(self, lineage_info: LineageInfo):
+    def _print_data_flow(self, lineage_info: LineageInfo) -> None:
         """Print the data flow diagram"""
         print("   Source Tables → Processing → Target Tables")
         print("   " + "→".join(["📥"] + ["⚙️"] + ["📤"]))
 
         # Group by operation type
-        operation_groups = {}
+        operation_groups: Dict[str, List[TableOperation]] = {}
         for op in lineage_info.operations:
             if op.operation_type not in operation_groups:
                 operation_groups[op.operation_type] = []
@@ -679,7 +681,7 @@ class ETLLineageAnalyzer:
                 sources = " + ".join(op.source_tables) if op.source_tables else "N/A"
                 print(f"      {sources} → {op.target_table}")
 
-    def export_to_json(self, lineage_info: LineageInfo, output_file: str = None):
+    def export_to_json(self, lineage_info: LineageInfo, output_file: Optional[str] = None) -> None:
         """Export lineage information to JSON format"""
         data = {
             "script_name": lineage_info.script_name,
@@ -714,7 +716,7 @@ class ETLLineageAnalyzer:
         else:
             print(json.dumps(data, indent=2))
 
-    def export_to_html(self, lineage_info: LineageInfo, output_file: str):
+    def export_to_html(self, lineage_info: LineageInfo, output_file: str) -> None:
         """Export lineage information to HTML format"""
         html_content = f"""
 <!DOCTYPE html>
@@ -826,7 +828,7 @@ class ETLLineageAnalyzer:
             f.write(html_content)
         print(f"💾 HTML report exported to: {output_file}")
 
-    def process_folder(self, input_folder: str, output_folder: str):
+    def process_folder(self, input_folder: str, output_folder: str) -> None:
         """Process all .sh and .ksh files in the input folder and generate reports in the output folder"""
         input_path = Path(input_folder)
         output_path = Path(output_folder)
@@ -857,7 +859,7 @@ class ETLLineageAnalyzer:
         for script_file in script_files:
             try:
                 print(f"\nProcessing: {script_file.name}")
-                lineage_info = self.analyze_script(script_file)
+                lineage_info = self.analyze_script(str(script_file))
 
                 # Generate JSON report with extension included
                 json_file = (
@@ -909,7 +911,7 @@ class ETLLineageAnalyzer:
         print(f"   • Summary report: {summary_file}")
 
 
-def main():
+def main() -> None:
     """Main function to run the ETL lineage analyzer"""
     parser = argparse.ArgumentParser(
         description="Analyze ETL shell scripts to extract data lineage information",
