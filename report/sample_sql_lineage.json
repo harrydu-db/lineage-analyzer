@@ -1,0 +1,99 @@
+{
+  "script_name": "sample.sql",
+  "summary": {
+    "total_operations": 5,
+    "source_tables_count": 7,
+    "target_tables_count": 5,
+    "volatile_tables_count": 1
+  },
+  "source_tables": [
+    "CUSTOMER_REPORTING",
+    "CUSTOMER_SUMMARY",
+    "ORDER_FACT",
+    "REGION_DIM",
+    "SALES_REP_DIM",
+    "SEGMENT_REF",
+    "TEMP_CUSTOMER_DATA"
+  ],
+  "target_tables": [
+    "CUSTOMER_DETAILS",
+    "CUSTOMER_REPORTING",
+    "CUSTOMER_SUMMARY",
+    "ETL_AUDIT_LOG",
+    "TEMP_CUSTOMER_DATA"
+  ],
+  "volatile_tables": [
+    "TEMP_CUSTOMER_DATA"
+  ],
+  "operations": [
+    {
+      "operation_type": "CREATE_VOLATILE",
+      "target_table": "TEMP_CUSTOMER_DATA",
+      "source_tables": [
+        "CUSTOMER_DIM",
+        "ORDER_FACT"
+      ],
+      "line_number": 1
+    },
+    {
+      "operation_type": "UPDATE",
+      "target_table": "CUSTOMER_SUMMARY",
+      "source_tables": [
+        "TEMP_CUSTOMER_DATA",
+        "CUSTOMER_SUMMARY"
+      ],
+      "line_number": 12
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "CUSTOMER_DETAILS",
+      "source_tables": [
+        "TEMP_CUSTOMER_DATA"
+      ],
+      "line_number": 20
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "CUSTOMER_REPORTING",
+      "source_tables": [
+        "REGION_DIM",
+        "TEMP_CUSTOMER_DATA",
+        "ORDER_FACT",
+        "SEGMENT_REF",
+        "SALES_REP_DIM"
+      ],
+      "line_number": 33
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "ETL_AUDIT_LOG",
+      "source_tables": [
+        "CUSTOMER_REPORTING"
+      ],
+      "line_number": 57
+    }
+  ],
+  "table_relationships": {
+    "TEMP_CUSTOMER_DATA": [
+      "CUSTOMER_DIM",
+      "ORDER_FACT"
+    ],
+    "CUSTOMER_SUMMARY": [
+      "TEMP_CUSTOMER_DATA",
+      "CUSTOMER_SUMMARY"
+    ],
+    "CUSTOMER_DETAILS": [
+      "TEMP_CUSTOMER_DATA"
+    ],
+    "CUSTOMER_REPORTING": [
+      "REGION_DIM",
+      "TEMP_CUSTOMER_DATA",
+      "ORDER_FACT",
+      "SEGMENT_REF",
+      "SALES_REP_DIM"
+    ],
+    "ETL_AUDIT_LOG": [
+      "CUSTOMER_REPORTING"
+    ]
+  }
+}

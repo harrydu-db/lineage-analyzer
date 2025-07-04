@@ -1,0 +1,99 @@
+{
+  "script_name": "sample.sh",
+  "summary": {
+    "total_operations": 5,
+    "source_tables_count": 7,
+    "target_tables_count": 5,
+    "volatile_tables_count": 1
+  },
+  "source_tables": [
+    "CATEGORY_REF",
+    "PRODUCT_SUMMARY",
+    "REGION_DIM",
+    "SALES_CHANNEL_DIM",
+    "SALES_FACT",
+    "SALES_REPORTING",
+    "TEMP_SALES_DATA"
+  ],
+  "target_tables": [
+    "ETL_AUDIT_LOG",
+    "PRODUCT_DETAILS",
+    "PRODUCT_SUMMARY",
+    "SALES_REPORTING",
+    "TEMP_SALES_DATA"
+  ],
+  "volatile_tables": [
+    "TEMP_SALES_DATA"
+  ],
+  "operations": [
+    {
+      "operation_type": "CREATE_VOLATILE",
+      "target_table": "TEMP_SALES_DATA",
+      "source_tables": [
+        "SALES_FACT",
+        "PRODUCT_DIM"
+      ],
+      "line_number": 5
+    },
+    {
+      "operation_type": "UPDATE",
+      "target_table": "PRODUCT_SUMMARY",
+      "source_tables": [
+        "TEMP_SALES_DATA",
+        "PRODUCT_SUMMARY"
+      ],
+      "line_number": 24
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "PRODUCT_DETAILS",
+      "source_tables": [
+        "TEMP_SALES_DATA"
+      ],
+      "line_number": 35
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "SALES_REPORTING",
+      "source_tables": [
+        "CATEGORY_REF",
+        "REGION_DIM",
+        "SALES_FACT",
+        "TEMP_SALES_DATA",
+        "SALES_CHANNEL_DIM"
+      ],
+      "line_number": 51
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "ETL_AUDIT_LOG",
+      "source_tables": [
+        "SALES_REPORTING"
+      ],
+      "line_number": 79
+    }
+  ],
+  "table_relationships": {
+    "TEMP_SALES_DATA": [
+      "SALES_FACT",
+      "PRODUCT_DIM"
+    ],
+    "PRODUCT_SUMMARY": [
+      "TEMP_SALES_DATA",
+      "PRODUCT_SUMMARY"
+    ],
+    "PRODUCT_DETAILS": [
+      "TEMP_SALES_DATA"
+    ],
+    "SALES_REPORTING": [
+      "CATEGORY_REF",
+      "REGION_DIM",
+      "SALES_FACT",
+      "TEMP_SALES_DATA",
+      "SALES_CHANNEL_DIM"
+    ],
+    "ETL_AUDIT_LOG": [
+      "SALES_REPORTING"
+    ]
+  }
+}

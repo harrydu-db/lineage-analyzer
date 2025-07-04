@@ -1,2 +1,233 @@
-# lineage-analyzer
-Analyzing the lineage for sql and bteq code in shell and sql file. 
+# ETL Lineage Analyzer
+
+A Python tool for analyzing ETL shell scripts and SQL files to extract data lineage information, identifying source tables, target tables, and the relationships between them.
+
+## Features
+
+- **Batch Processing**: Process all `.sh`, `.ksh`, and `.sql` files in a folder automatically
+- **Multiple Output Formats**: Generate JSON, HTML, and text reports
+- **Robust SQL Parsing**: Handles complex Teradata SQL with subqueries, aliases, and nested operations
+- **Comprehensive Analysis**: Extracts source tables, target tables, volatile tables, and operation details
+- **Line Number Tracking**: Provides accurate line numbers for each operation
+- **Table Relationship Mapping**: Shows data flow between tables
+- **Multiple File Types**: Supports shell scripts (`.sh`, `.ksh`) and direct SQL files (`.sql`)
+
+## Installation
+
+1. Ensure you have Python 3.7+ installed
+2. Install required dependencies:
+   ```bash
+   pip install sqlparse
+   ```
+
+## Usage
+
+### Batch Processing (Recommended)
+
+Process all `.sh`, `.ksh`, and `.sql` files in a folder:
+
+```bash
+python lineage.py <input_folder> <output_folder>
+```
+
+**Example:**
+```bash
+python lineage.py old/Lotmaster_scripts/ reports/
+```
+
+This will:
+- Find all `.sh`, `.ksh`, and `.sql` files in `old/Lotmaster_scripts/`
+- Generate individual JSON and HTML reports for each file in `reports/`
+- Create a processing summary report
+
+### Single File Processing
+
+Analyze a single ETL script or SQL file:
+
+```bash
+# Print detailed report to console
+python lineage.py BatchTrack.sh
+python lineage.py my_etl.sql
+
+# Export to JSON file
+python lineage.py BatchTrack.sh --export lineage.json
+python lineage.py my_etl.sql --export lineage.json
+
+# Output JSON only (no console report)
+python lineage.py BatchTrack.sh --json
+python lineage.py my_etl.sql --json
+```
+
+## Supported File Types
+
+The analyzer supports three types of files:
+
+1. **Shell Scripts (`.sh`, `.ksh`)**: Files containing `bteq <<EOF ... EOF` blocks
+2. **SQL Files (`.sql`)**: Direct SQL files without shell script wrappers
+3. **Mixed Content**: Files that may contain both shell script elements and SQL
+
+### File Type Detection
+
+The tool automatically detects the file type and processes accordingly:
+
+- **Shell Scripts**: Extracts SQL from `bteq <<EOF ... EOF` heredoc blocks
+- **SQL Files**: Treats the entire content as SQL (removes shell comments and commands)
+- **Mixed Files**: Intelligently handles files with both shell and SQL content
+
+## Output Files
+
+### Batch Processing Output
+
+When processing a folder, the tool generates:
+
+1. **JSON Reports** (`*_lineage.json`): Machine-readable format with complete lineage data
+2. **HTML Reports** (`*_lineage.html`): Beautiful, formatted reports with styling
+3. **Processing Summary** (`processing_summary.txt`): Overview of all processed files
+
+### Report Contents
+
+Each report includes:
+
+- **Summary Statistics**: Total operations, source/target table counts
+- **Source Tables**: All tables that provide data to the ETL process
+- **Target Tables**: All tables that receive data from the ETL process
+- **Volatile Tables**: Temporary tables created during processing
+- **Table Relationships**: Data flow mapping between tables
+- **Detailed Operations**: CREATE, INSERT, UPDATE operations with line numbers
+- **Data Flow Diagram**: Visual representation of the ETL process
+
+## Supported SQL Operations
+
+The analyzer recognizes and extracts lineage from:
+
+- **CREATE VOLATILE TABLE**: Temporary table creation
+- **INSERT INTO**: Data insertion operations
+- **UPDATE**: Data modification operations
+- **SELECT**: Data retrieval (for source table identification)
+- **JOIN Operations**: LEFT OUTER JOIN, RIGHT OUTER JOIN, INNER JOIN
+
+## Table Name Extraction
+
+The tool uses multiple methods to extract table names:
+
+1. **sqlparse Library**: Structured SQL parsing
+2. **Enhanced Regex Patterns**: Handles complex FROM/JOIN clauses
+3. **Subquery Detection**: Extracts tables from nested queries
+4. **Alias Handling**: Ignores single-letter aliases (A, B, C, etc.)
+
+### Table Name Validation
+
+The analyzer filters out:
+- SQL keywords (SELECT, FROM, WHERE, etc.)
+- Single-letter aliases (A, B, C, etc.)
+- Names containing SQL expressions
+- Invalid table name patterns
+
+## Example Output
+
+### Console Report
+```
+================================================================================
+ETL LINEAGE ANALYSIS REPORT
+Script: BatchTrack.sh
+================================================================================
+
+📊 SUMMARY:
+   • Total Operations: 12
+   • Source Tables: 7
+   • Target Tables: 8
+   • Volatile Tables: 1
+
+🔍 SOURCE TABLES:
+   • BATCHTRACK_N
+   • BIZT.BIZT_RESP_MSG_LM
+   • EDW.LOT_SO_DTL
+   • reference.material
+   • ...
+
+🎯 TARGET TABLES:
+   • BATCHTRACK_N
+   • LOTMASTER_BASE_T.LOT_EVT_DTL
+   • LOTMASTER_BASE_T.LOT_PICK_DTL
+   • ...
+
+🔄 TABLE RELATIONSHIPS:
+   • BATCHTRACK_N ← BIZT.BIZT_RESP_MSG_LM_V, BIZT.BIZT_BATCHTRACK_V, LOTMASTER.LOT_SO_DTL
+   • LOTMASTER_BASE_T.LOT_EVT_DTL ← BATCHTRACK_N, EDW.LOT_SO_DTL
+   • ...
+```
+
+### JSON Output Structure
+```json
+{
+  "script_name": "BatchTrack.sh",
+  "summary": {
+    "total_operations": 12,
+    "source_tables_count": 7,
+    "target_tables_count": 8,
+    "volatile_tables_count": 1
+  },
+  "source_tables": ["BIZT.BIZT_BATCHTRACK_V", "reference.material", ...],
+  "target_tables": ["BATCHTRACK_N", "LOTMASTER_BASE_T.LOT_EVT_DTL", ...],
+  "volatile_tables": ["BATCHTRACK_N"],
+  "operations": [
+    {
+      "operation_type": "CREATE_VOLATILE",
+      "target_table": "BATCHTRACK_N",
+      "source_tables": ["BIZT.BIZT_RESP_MSG_LM_V", "BIZT.BIZT_BATCHTRACK_V", "LOTMASTER.LOT_SO_DTL"],
+      "line_number": 6
+    }
+  ],
+  "table_relationships": {
+    "BATCHTRACK_N": ["BIZT.BIZT_RESP_MSG_LM_V", "BIZT.BIZT_BATCHTRACK_V", "LOTMASTER.LOT_SO_DTL"]
+  }
+}
+```
+
+## Error Handling
+
+The tool gracefully handles:
+- Files without SQL blocks
+- Malformed SQL syntax
+- Missing input/output folders
+- Permission issues
+
+Failed files are logged in the processing summary with error details.
+
+## Limitations
+
+- Designed primarily for Teradata SQL syntax
+- Complex nested subqueries may not be fully parsed
+- Some dynamic SQL or stored procedures may not be detected
+- Line numbers are approximate for very complex SQL structures
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"No SQL blocks found"**: 
+   - For shell scripts: File doesn't contain `bteq <<EOF ... EOF` blocks
+   - For SQL files: File may be empty or contain only comments/shell commands
+2. **Missing source tables**: Complex SQL with deep nesting may miss some tables
+3. **Incorrect line numbers**: Very long SQL statements may have approximate line numbers
+4. **SQL file not processed**: Ensure the file has `.sql` extension and contains valid SQL
+
+### Improving Results
+
+- **For Shell Scripts**: Ensure SQL is properly formatted in `bteq` heredoc blocks
+- **For SQL Files**: Use clear table aliases (avoid single letters when possible)
+- **For Both**: Structure complex queries with proper indentation
+- **Mixed Files**: The tool will automatically detect and handle files with both shell and SQL content
+
+## Contributing
+
+To improve the analyzer:
+
+1. Add new SQL operation patterns to the regex lists
+2. Enhance table name validation rules
+3. Improve subquery detection logic
+4. Add support for additional SQL dialects
+
+## License
+
+This tool is part of the NXP Lotmaster project and follows the project's licensing terms. 

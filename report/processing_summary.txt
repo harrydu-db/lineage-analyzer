@@ -1,0 +1,13 @@
+ETL Lineage Analysis Summary
+Generated on: 2025-07-03 22:55:54
+Input folder: tools/samples
+Output folder: tools/report
+
+Total files found: 2
+Successfully processed: 2
+Failed to process: 0
+
+Successfully processed files:
+  - sample.sh
+  - sample.sql
+
