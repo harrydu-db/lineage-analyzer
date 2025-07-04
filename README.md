@@ -180,26 +180,34 @@ Script: BatchTrack.sh
 ### JSON Output Structure
 ```json
 {
-  "script_name": "BatchTrack.sh",
+  "script_name": "etl_script.sh",
   "summary": {
     "total_operations": 12,
     "source_tables_count": 7,
     "target_tables_count": 8,
     "volatile_tables_count": 1
   },
-  "source_tables": ["BIZT.BIZT_BATCHTRACK_V", "reference.material", ...],
-  "target_tables": ["BATCHTRACK_N", "LOTMASTER_BASE_T.LOT_EVT_DTL", ...],
-  "volatile_tables": ["BATCHTRACK_N"],
+  "source_tables": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary", "warehouse.inventory", "external.vendor_data", "temp.processed_orders", "archive.old_records"],
+  "target_tables": ["temp.staging_table", "warehouse.final_customer_table", "analytics.monthly_report", "staging.processed_data", "warehouse.aggregated_sales", "temp.intermediate_result", "analytics.dashboard_data", "warehouse.clean_data"],
+  "volatile_tables": ["temp.staging_table"],
   "operations": [
     {
       "operation_type": "CREATE_VOLATILE",
-      "target_table": "BATCHTRACK_N",
-      "source_tables": ["BIZT.BIZT_RESP_MSG_LM_V", "BIZT.BIZT_BATCHTRACK_V", "LOTMASTER.LOT_SO_DTL"],
+      "target_table": "temp.staging_table",
+      "source_tables": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary"],
       "line_number": 6
+    },
+    {
+      "operation_type": "INSERT",
+      "target_table": "warehouse.final_customer_table",
+      "source_tables": ["temp.staging_table", "warehouse.inventory"],
+      "line_number": 15
     }
   ],
   "table_relationships": {
-    "BATCHTRACK_N": ["BIZT.BIZT_RESP_MSG_LM_V", "BIZT.BIZT_BATCHTRACK_V", "LOTMASTER.LOT_SO_DTL"]
+    "temp.staging_table": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary"],
+    "warehouse.final_customer_table": ["temp.staging_table", "warehouse.inventory"],
+    "analytics.monthly_report": ["warehouse.final_customer_table", "external.vendor_data"]
   }
 }
 ```
