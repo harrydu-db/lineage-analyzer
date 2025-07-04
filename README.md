@@ -1,6 +1,26 @@
-# ETL Lineage Analyzer
+# SQL Lineage Analyzer
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![CI](https://github.com/your-username/lineage-analyzer/workflows/CI/badge.svg)](https://github.com/your-username/lineage-analyzer/actions)
 
 A Python tool for analyzing ETL shell scripts and SQL files to extract data lineage information, identifying source tables, target tables, and the relationships between them.
+
+## 🚀 Quick Start
+
+```bash
+# Install from PyPI (coming soon)
+pip install etl-lineage-analyzer
+
+# Or install from source
+git clone https://github.com/your-username/lineage-analyzer.git
+cd lineage-analyzer
+pip install -e .
+
+# Analyze your ETL scripts
+lineage-analyzer your_scripts_folder/ output_reports/
+```
 
 ## Features
 
@@ -219,15 +239,71 @@ Failed files are logged in the processing summary with error details.
 - **For Both**: Structure complex queries with proper indentation
 - **Mixed Files**: The tool will automatically detect and handle files with both shell and SQL content
 
-## Contributing
+## 🤝 Contributing
 
-To improve the analyzer:
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to:
 
-1. Add new SQL operation patterns to the regex lists
-2. Enhance table name validation rules
-3. Improve subquery detection logic
-4. Add support for additional SQL dialects
+- Report bugs
+- Suggest new features
+- Submit pull requests
+- Set up the development environment
 
-## License
+### Development Setup
 
-This tool is part of the NXP Lotmaster project and follows the project's licensing terms. 
+```bash
+# Clone the repository
+git clone https://github.com/your-username/lineage-analyzer.git
+cd lineage-analyzer
+
+# Set up virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# Install in development mode
+pip install -e .
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src
+
+# Format code
+black src/
+
+# Check linting
+flake8 src/
+```
+
+## 📋 Roadmap
+
+- [ ] Support for PostgreSQL and MySQL syntax
+- [ ] Enhanced visualization with interactive diagrams
+- [ ] Integration with popular data platforms
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [sqlparse](https://github.com/andialbrecht/sqlparse) for SQL parsing
+- Inspired by the need for better ETL documentation and lineage tracking
+- Thanks to all contributors and users of this project
+
+## 📞 Support
+
+- 📖 [Documentation](https://github.com/harrydu-db/lineage-analyzer#readme)
+- 🐛 [Report a Bug](https://github.com/harrydu-db/lineage-analyzer/issues)
+- 💡 [Request a Feature](https://github.com/harrydu-db/lineage-analyzer/issues)
+- 💬 [Discussions](https://github.com/harrydu-db/lineage-analyzer/discussions)
+
+---
