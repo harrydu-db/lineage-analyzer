@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![CI](https://github.com/your-username/lineage-analyzer/workflows/CI/badge.svg)](https://github.com/your-username/lineage-analyzer/actions)
+[![CI](https://github.com/harrydu-db/lineage-analyzer/workflows/CI/badge.svg)](https://github.com/harrydu-db/lineage-analyzer/actions)
 
 A Python tool for analyzing ETL shell scripts and SQL files to extract data lineage information, identifying source tables, target tables, and the relationships between them.
 
@@ -14,7 +14,7 @@ A Python tool for analyzing ETL shell scripts and SQL files to extract data line
 pip install etl-lineage-analyzer
 
 # Or install from source
-git clone https://github.com/your-username/lineage-analyzer.git
+git clone https://github.com/harrydu-db/lineage-analyzer.git
 cd lineage-analyzer
 pip install -e .
 
@@ -252,7 +252,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/lineage-analyzer.git
+git clone https://github.com/harrydu-db/lineage-analyzer.git
 cd lineage-analyzer
 
 # Set up virtual environment
