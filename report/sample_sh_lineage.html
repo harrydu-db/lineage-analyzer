@@ -73,7 +73,7 @@
             <div class="relationship"><strong>TEMP_SALES_DATA</strong> ← SALES_FACT, PRODUCT_DIM</div>
             <div class="relationship"><strong>PRODUCT_SUMMARY</strong> ← TEMP_SALES_DATA, PRODUCT_SUMMARY</div>
             <div class="relationship"><strong>PRODUCT_DETAILS</strong> ← TEMP_SALES_DATA</div>
-            <div class="relationship"><strong>SALES_REPORTING</strong> ← CATEGORY_REF, REGION_DIM, SALES_FACT, TEMP_SALES_DATA, SALES_CHANNEL_DIM</div>
+            <div class="relationship"><strong>SALES_REPORTING</strong> ← SALES_CHANNEL_DIM, TEMP_SALES_DATA, CATEGORY_REF, SALES_FACT, REGION_DIM</div>
             <div class="relationship"><strong>ETL_AUDIT_LOG</strong> ← SALES_REPORTING</div>
 
         </div>
@@ -105,7 +105,7 @@
             <div class="operation">
                 <h4>4. INSERT</h4>
                 <p><strong>Target:</strong> SALES_REPORTING</p>
-                <p><strong>Sources:</strong> CATEGORY_REF, REGION_DIM, SALES_FACT, TEMP_SALES_DATA, SALES_CHANNEL_DIM</p>
+                <p><strong>Sources:</strong> SALES_CHANNEL_DIM, TEMP_SALES_DATA, CATEGORY_REF, SALES_FACT, REGION_DIM</p>
                 <p><strong>Line:</strong> 51</p>
             </div>
 
@@ -119,7 +119,7 @@
         </div>
         
         <div class="timestamp">
-            Generated on 2025-07-03 22:55:54
+            Generated on 2025-07-03 23:43:54
         </div>
     </div>
 </body>

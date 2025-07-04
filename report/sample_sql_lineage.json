@@ -30,8 +30,8 @@
       "operation_type": "CREATE_VOLATILE",
       "target_table": "TEMP_CUSTOMER_DATA",
       "source_tables": [
-        "CUSTOMER_DIM",
-        "ORDER_FACT"
+        "ORDER_FACT",
+        "CUSTOMER_DIM"
       ],
       "line_number": 1
     },
@@ -56,11 +56,11 @@
       "operation_type": "INSERT",
       "target_table": "CUSTOMER_REPORTING",
       "source_tables": [
-        "REGION_DIM",
-        "TEMP_CUSTOMER_DATA",
-        "ORDER_FACT",
         "SEGMENT_REF",
-        "SALES_REP_DIM"
+        "ORDER_FACT",
+        "SALES_REP_DIM",
+        "REGION_DIM",
+        "TEMP_CUSTOMER_DATA"
       ],
       "line_number": 33
     },
@@ -75,8 +75,8 @@
   ],
   "table_relationships": {
     "TEMP_CUSTOMER_DATA": [
-      "CUSTOMER_DIM",
-      "ORDER_FACT"
+      "ORDER_FACT",
+      "CUSTOMER_DIM"
     ],
     "CUSTOMER_SUMMARY": [
       "TEMP_CUSTOMER_DATA",
@@ -86,11 +86,11 @@
       "TEMP_CUSTOMER_DATA"
     ],
     "CUSTOMER_REPORTING": [
-      "REGION_DIM",
-      "TEMP_CUSTOMER_DATA",
-      "ORDER_FACT",
       "SEGMENT_REF",
-      "SALES_REP_DIM"
+      "ORDER_FACT",
+      "SALES_REP_DIM",
+      "REGION_DIM",
+      "TEMP_CUSTOMER_DATA"
     ],
     "ETL_AUDIT_LOG": [
       "CUSTOMER_REPORTING"

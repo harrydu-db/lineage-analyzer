@@ -56,11 +56,11 @@
       "operation_type": "INSERT",
       "target_table": "SALES_REPORTING",
       "source_tables": [
-        "CATEGORY_REF",
-        "REGION_DIM",
-        "SALES_FACT",
+        "SALES_CHANNEL_DIM",
         "TEMP_SALES_DATA",
-        "SALES_CHANNEL_DIM"
+        "CATEGORY_REF",
+        "SALES_FACT",
+        "REGION_DIM"
       ],
       "line_number": 51
     },
@@ -86,11 +86,11 @@
       "TEMP_SALES_DATA"
     ],
     "SALES_REPORTING": [
-      "CATEGORY_REF",
-      "REGION_DIM",
-      "SALES_FACT",
+      "SALES_CHANNEL_DIM",
       "TEMP_SALES_DATA",
-      "SALES_CHANNEL_DIM"
+      "CATEGORY_REF",
+      "SALES_FACT",
+      "REGION_DIM"
     ],
     "ETL_AUDIT_LOG": [
       "SALES_REPORTING"
