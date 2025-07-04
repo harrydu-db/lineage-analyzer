@@ -18,7 +18,6 @@ Example:
 import re
 import sys
 import argparse
-import os
 from typing import Dict, List, Set, Optional
 from dataclasses import dataclass
 from pathlib import Path
