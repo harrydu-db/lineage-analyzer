@@ -1,7 +1,7 @@
 # SQL Lineage Analyzer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![CI](https://github.com/harrydu-db/lineage-analyzer/workflows/CI/badge.svg)](https://github.com/harrydu-db/lineage-analyzer/actions)
 
@@ -34,7 +34,7 @@ lineage-analyzer your_scripts_folder/ output_reports/
 
 ## Installation
 
-1. Ensure you have Python 3.7+ installed
+1. Ensure you have Python 3.10+ installed
 2. Install required dependencies:
    ```bash
    pip install sqlparse
