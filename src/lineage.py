@@ -140,7 +140,7 @@ class ETLLineageAnalyzer:
 
         # Patterns for different SQL operations
         self.patterns = {
-            "create_volatile": r"CREATE\s+VOLATILE\s+TABLE\s+(\w+)\s+AS\s*\(",
+            "create_volatile": r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+(\w+)\s+AS\s*\(",
             "insert": r"INSERT\s+INTO\s+([\w\.]+)\s*\(",
             "update": r"UPDATE\s+([\w\.]+)\s+FROM\s+([\w\.]+)",
             "select_from": r"FROM\s+([\w\.]+)",
@@ -287,7 +287,7 @@ class ETLLineageAnalyzer:
                         tables.add(table_name)
 
         # Method 4: Extract from CREATE VOLATILE TABLE
-        create_pattern = r"CREATE\s+VOLATILE\s+TABLE\s+(\w+)\s+AS"
+        create_pattern = r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+(\w+)\s+AS"
         create_matches = re.finditer(
             create_pattern, sql_clean, re.IGNORECASE | re.DOTALL
         )
@@ -368,7 +368,7 @@ class ETLLineageAnalyzer:
 
         # CREATE VOLATILE TABLE
         create_match = re.search(
-            r"CREATE\s+VOLATILE\s+TABLE\s+(\w+)\s+AS\s*\(",
+            r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+(\w+)\s+AS\s*\(",
             statement,
             re.IGNORECASE | re.DOTALL,
         )
@@ -399,11 +399,28 @@ class ETLLineageAnalyzer:
             )
 
         # UPDATE (Teradata format: UPDATE alias FROM table alias, (subquery) alias)
+        # Look for the target table in the FROM clause
         update_match = re.search(
             r"UPDATE\s+\w+\s+FROM\s+([\w\.]+)", statement, re.IGNORECASE
         )
         if update_match:
             target_table = update_match.group(1)
+            source_tables = self._extract_source_tables_from_update(statement)
+            return TableOperation(
+                operation_type="UPDATE",
+                target_table=target_table,
+                source_tables=source_tables,
+                columns=[],
+                conditions=[],
+                line_number=line_number,
+            )
+
+        # Standard UPDATE statement (not Teradata format)
+        standard_update_match = re.search(
+            r"UPDATE\s+([\w\.]+)\s+SET", statement, re.IGNORECASE
+        )
+        if standard_update_match:
+            target_table = standard_update_match.group(1)
             source_tables = self._extract_source_tables_from_update(statement)
             return TableOperation(
                 operation_type="UPDATE",
@@ -466,6 +483,13 @@ class ETLLineageAnalyzer:
         # Extract from subqueries in SELECT statements
         subquery_pattern = r"SELECT\s+.*?\s+FROM\s+([a-zA-Z0-9_.]+)"
         for match in re.finditer(subquery_pattern, sql, re.IGNORECASE | re.DOTALL):
+            table = match.group(1).strip()
+            if self.is_valid_table_name(table):
+                tables.add(table)
+
+        # Extract from subqueries in WHERE clauses (like the one in the CAMSTAR script)
+        where_subquery_pattern = r"WHERE\s+.*?\s+IN\s*\(\s*SELECT\s+.*?\s+FROM\s+([a-zA-Z0-9_.]+)"
+        for match in re.finditer(where_subquery_pattern, sql, re.IGNORECASE | re.DOTALL):
             table = match.group(1).strip()
             if self.is_valid_table_name(table):
                 tables.add(table)
@@ -562,7 +586,20 @@ class ETLLineageAnalyzer:
 
     def _extract_source_tables_from_select(self, statement: str) -> List[str]:
         """Extract source tables from SELECT statement, recursively."""
-        return self._extract_all_source_tables(statement)
+        # For CREATE VOLATILE TABLE, we need to extract tables from the SELECT part
+        # Remove the CREATE VOLATILE TABLE part to focus on the SELECT
+        select_part = statement
+        create_match = re.search(
+            r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+\w+\s+AS\s*\(\s*(.*)",
+            statement,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if create_match:
+            select_part = create_match.group(1)
+            # Remove the closing parenthesis and WITH DATA part
+            select_part = re.sub(r"\)\s*WITH\s+DATA.*$", "", select_part, flags=re.IGNORECASE | re.DOTALL)
+        
+        return self._extract_all_source_tables(select_part)
 
     def _extract_source_tables_from_update(self, statement: str) -> List[str]:
         """Extract source tables from UPDATE statement (Teradata format), recursively."""
@@ -599,6 +636,7 @@ class ETLLineageAnalyzer:
             if operation.operation_type == "CREATE_VOLATILE":
                 volatile_tables.append(operation.target_table)
                 target_tables.add(operation.target_table)
+                source_tables.update(operation.source_tables)
             elif operation.operation_type in ["INSERT", "UPDATE"]:
                 target_tables.add(operation.target_table)
                 source_tables.update(operation.source_tables)
@@ -779,6 +817,16 @@ class ETLLineageAnalyzer:
 """
 
         for table in sorted(lineage_info.target_tables):
+            html_content += f"                    <li>{table}</li>\n"
+
+        html_content += """
+                </ul>
+            </div>
+            <div class="table-section">
+                <h3>⚡ Volatile Tables (Temporary)</h3>
+                <ul>
+"""
+        for table in sorted(lineage_info.volatile_tables):
             html_content += f"                    <li>{table}</li>\n"
 
         html_content += """
