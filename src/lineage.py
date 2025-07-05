@@ -321,7 +321,9 @@ class ETLLineageAnalyzer:
                 operations.append(operation)
         return operations
 
-    def _split_sql_statements_with_offsets(self, sql_block: str) -> List[Tuple[str, int]]:
+    def _split_sql_statements_with_offsets(
+        self, sql_block: str
+    ) -> List[Tuple[str, int]]:
         """Split SQL block into statements and return (statement, char_offset) tuples."""
         sql_clean = re.sub(r"--.*$", "", sql_block, flags=re.MULTILINE)
         sql_clean = re.sub(r"/\*.*?\*/", "", sql_clean, flags=re.DOTALL)
@@ -488,8 +490,12 @@ class ETLLineageAnalyzer:
                 tables.add(table)
 
         # Extract from subqueries in WHERE clauses (like the one in the CAMSTAR script)
-        where_subquery_pattern = r"WHERE\s+.*?\s+IN\s*\(\s*SELECT\s+.*?\s+FROM\s+([a-zA-Z0-9_.]+)"
-        for match in re.finditer(where_subquery_pattern, sql, re.IGNORECASE | re.DOTALL):
+        where_subquery_pattern = (
+            r"WHERE\s+.*?\s+IN\s*\(\s*SELECT\s+.*?\s+FROM\s+([a-zA-Z0-9_.]+)"
+        )
+        for match in re.finditer(
+            where_subquery_pattern, sql, re.IGNORECASE | re.DOTALL
+        ):
             table = match.group(1).strip()
             if self.is_valid_table_name(table):
                 tables.add(table)
@@ -597,8 +603,10 @@ class ETLLineageAnalyzer:
         if create_match:
             select_part = create_match.group(1)
             # Remove the closing parenthesis and WITH DATA part
-            select_part = re.sub(r"\)\s*WITH\s+DATA.*$", "", select_part, flags=re.IGNORECASE | re.DOTALL)
-        
+            select_part = re.sub(
+                r"\)\s*WITH\s+DATA.*$", "", select_part, flags=re.IGNORECASE | re.DOTALL
+            )
+
         return self._extract_all_source_tables(select_part)
 
     def _extract_source_tables_from_update(self, statement: str) -> List[str]:
@@ -719,7 +727,9 @@ class ETLLineageAnalyzer:
                 sources = " + ".join(op.source_tables) if op.source_tables else "N/A"
                 print(f"      {sources} → {op.target_table}")
 
-    def export_to_json(self, lineage_info: LineageInfo, output_file: Optional[str] = None) -> None:
+    def export_to_json(
+        self, lineage_info: LineageInfo, output_file: Optional[str] = None
+    ) -> None:
         """Export lineage information to JSON format"""
         data = {
             "script_name": lineage_info.script_name,
