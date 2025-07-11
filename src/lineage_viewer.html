@@ -964,10 +964,11 @@
             // Create a custom input dialog
             const input = document.createElement('input');
             input.type = 'text';
-            input.placeholder = 'Enter the path to your JSON file (relative to this HTML file)';
+            input.placeholder = 'Enter path to JSON file or folder (e.g., ../report_lm/ or ./script.json)';
             // Use the current URL parameter as default, or fall back to a default path
             const currentJsonPath = new URLSearchParams(window.location.search).get('json');
-            input.value = currentJsonPath || './YourScript_lineage.json';
+            const currentFolderPath = new URLSearchParams(window.location.search).get('folder');
+            input.value = currentJsonPath || currentFolderPath || './YourScript_lineage.json';
             input.style.cssText = `
                 position: fixed;
                 top: 50%;
@@ -1040,7 +1041,7 @@
             
             loadBtn.onclick = () => {
                 if (input.value.trim()) {
-                    loadJsonFromPath(input.value.trim());
+                    loadFromPath(input.value.trim());
                 }
                 cleanup();
             };
@@ -1050,7 +1051,7 @@
             input.onkeydown = (e) => {
                 if (e.key === 'Enter') {
                     if (input.value.trim()) {
-                        loadJsonFromPath(input.value.trim());
+                        loadFromPath(input.value.trim());
                     }
                     cleanup();
                 } else if (e.key === 'Escape') {
@@ -1068,6 +1069,29 @@
             // Focus the input
             input.focus();
             input.select();
+        }
+
+        function loadFromPath(path) {
+            const trimmedPath = path.trim();
+            
+            // Check if it's a folder path (ends with /)
+            if (trimmedPath.endsWith('/')) {
+                // Load folder - look for all_lineage.txt in the folder
+                loadAllLineageFilesFromFolder(trimmedPath);
+                return;
+            }
+            
+            // Check if it's a JSON file (ends with .json)
+            if (trimmedPath.endsWith('.json')) {
+                // Load single JSON file
+                loadJsonFromPath(trimmedPath);
+                return;
+            }
+            
+            // If neither, assume it's a folder and try to load all_lineage.txt
+            // Add trailing slash if not present
+            const folderPath = trimmedPath.endsWith('/') ? trimmedPath : trimmedPath + '/';
+            loadAllLineageFilesFromFolder(folderPath);
         }
 
         function loadJsonFromPath(jsonPath) {
