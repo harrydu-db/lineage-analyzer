@@ -38,6 +38,7 @@ class TableOperation:
     columns: List[str]
     conditions: List[str]
     line_number: int
+    sql_statement: str
 
 
 @dataclass
@@ -195,7 +196,11 @@ class ETLLineageAnalyzer:
             matches = re.finditer(bteq_pattern, content, re.DOTALL | re.IGNORECASE)
 
             for match in matches:
-                sql_blocks.append(match.group(1))
+                sql_block = match.group(1)
+                # For lineage analysis, use the original SQL block without cleaning
+                # This ensures CREATE VOLATILE TABLE statements are preserved
+                if sql_block.strip():
+                    sql_blocks.append(sql_block)
         else:
             # For .sql files, treat the entire content as SQL
             # Remove shell script elements if present
@@ -220,6 +225,116 @@ class ETLLineageAnalyzer:
                 sql_blocks.append(sql_content)
 
         return sql_blocks
+
+    def _clean_bteq_sql(self, sql_block: str) -> str:
+        """Remove BTEQ control statements and keep only pure SQL"""
+        # Remove BTEQ control statements
+        bteq_control_patterns = [
+            r"\.IF\s+.*?THEN\s+GOTO\s+\w+",  # .IF ... THEN GOTO ...
+            r"\.SET\s+.*?;",  # .SET ... ;
+            r"\.LABEL\s+\w+;",  # .LABEL ... ;
+            r"\.EXPORT\s+.*?;",  # .EXPORT ... ;
+            r"\.LOGOFF;",  # .LOGOFF;
+            r"\.QUIT;?",  # .QUIT or .QUIT;
+            r"\.BT;",  # .BT;
+            r"\.ET;",  # .ET;
+            r"\.GOTO\s+\w+;",  # .GOTO ... ;
+            r"\.SEVERITY\s+\d+;",  # .SEVERITY ... ;
+            r"\.ERRORLEVEL\s+.*?;",  # .ERRORLEVEL ... ;
+            r"\.ECHOREQ\s+.*?;",  # .ECHOREQ ... ;
+            r"\.ERROROUT\s+.*?;",  # .ERROROUT ... ;
+            r"\.TITLEDASHES\s+.*?;",  # .TITLEDASHES ... ;
+            r"\.WIDTH\s+.*?;",  # .WIDTH ... ;
+            r"\.RETRY\s+.*?;",  # .RETRY ... ;
+        ]
+        
+        cleaned_sql = sql_block
+        
+        # Remove all BTEQ control statements
+        for pattern in bteq_control_patterns:
+            cleaned_sql = re.sub(pattern, "", cleaned_sql, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+        
+        # Remove any line that starts with .QUIT (case-insensitive, with or without a semicolon)
+        cleaned_sql = re.sub(r"^\s*\.QUIT;?\s*$", "", cleaned_sql, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Remove empty lines and normalize whitespace
+        cleaned_sql = re.sub(r"\n\s*\n", "\n", cleaned_sql)  # Remove empty lines
+        cleaned_sql = re.sub(r"^\s+", "", cleaned_sql, flags=re.MULTILINE)  # Remove leading whitespace
+        cleaned_sql = re.sub(r"\s+$", "", cleaned_sql, flags=re.MULTILINE)  # Remove trailing whitespace
+        
+        return cleaned_sql.strip()
+
+    def _clean_bteq_sql_preserve_create(self, sql_block: str) -> str:
+        """Remove BTEQ control statements but preserve CREATE VOLATILE TABLE statements"""
+        # First, let's preserve CREATE VOLATILE TABLE statements by marking them
+        # Replace CREATE VOLATILE TABLE with a special marker
+        create_volatile_pattern = r"(CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+\w+\s+AS\s*\(.*?\)WITH\s+DATA.*?ON\s+COMMIT\s+PRESERVE\s+ROWS;)"
+        
+        # Find all CREATE VOLATILE TABLE statements
+        create_statements = re.findall(create_volatile_pattern, sql_block, re.IGNORECASE | re.DOTALL)
+        
+        # Remove BTEQ control statements but keep CREATE VOLATILE TABLE
+        bteq_control_patterns = [
+            r"\.IF\s+.*?THEN\s+GOTO\s+\w+",  # .IF ... THEN GOTO ...
+            r"\.SET\s+.*?;",  # .SET ... ;
+            r"\.LABEL\s+\w+;",  # .LABEL ... ;
+            r"\.EXPORT\s+.*?;",  # .EXPORT ... ;
+            r"\.LOGOFF;",  # .LOGOFF;
+            r"\.QUIT;",  # .QUIT;
+            r"\.BT;",  # .BT;
+            r"\.ET;",  # .ET;
+            r"\.GOTO\s+\w+;",  # .GOTO ... ;
+            r"\.SEVERITY\s+\d+;",  # .SEVERITY ... ;
+            r"\.ERRORLEVEL\s+.*?;",  # .ERRORLEVEL ... ;
+            r"\.ECHOREQ\s+.*?;",  # .ECHOREQ ... ;
+            r"\.ERROROUT\s+.*?;",  # .ERROROUT ... ;
+            r"\.TITLEDASHES\s+.*?;",  # .TITLEDASHES ... ;
+            r"\.WIDTH\s+.*?;",  # .WIDTH ... ;
+            r"\.RETRY\s+.*?;",  # .RETRY ... ;
+        ]
+        
+        cleaned_sql = sql_block
+        
+        # Remove all BTEQ control statements
+        for pattern in bteq_control_patterns:
+            cleaned_sql = re.sub(pattern, "", cleaned_sql, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+        
+        # Remove empty lines and normalize whitespace
+        cleaned_sql = re.sub(r"\n\s*\n", "\n", cleaned_sql)  # Remove empty lines
+        cleaned_sql = re.sub(r"^\s+", "", cleaned_sql, flags=re.MULTILINE)  # Remove leading whitespace
+        cleaned_sql = re.sub(r"\s+$", "", cleaned_sql, flags=re.MULTILINE)  # Remove trailing whitespace
+        
+        return cleaned_sql.strip()
+
+    def _clean_bteq_sql_for_json(self, sql_block: str) -> str:
+        """Remove BTEQ control statements but preserve CREATE VOLATILE TABLE statements for JSON export"""
+        # First, check if this is a CREATE VOLATILE TABLE statement
+        create_volatile_pattern = r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+\w+\s+AS\s*\(.*?\)WITH\s+DATA.*?ON\s+COMMIT\s+PRESERVE\s+ROWS;"
+        if re.search(create_volatile_pattern, sql_block, re.IGNORECASE | re.DOTALL):
+            # For CREATE VOLATILE TABLE, only remove the BTEQ control statements at the beginning
+            # but preserve the CREATE statement itself
+            lines = sql_block.split('\n')
+            cleaned_lines = []
+            in_create_statement = False
+            
+            for line in lines:
+                stripped = line.strip()
+                # Skip BTEQ control statements
+                if stripped.startswith('.') and not in_create_statement:
+                    continue
+                if stripped.upper() in ['BT', 'BT;', 'ET', 'ET;'] and not in_create_statement:
+                    continue
+                # Always skip .QUIT lines
+                if stripped.upper().startswith('.QUIT'):
+                    continue
+                # Check if we're entering a CREATE VOLATILE TABLE statement
+                if 'CREATE' in stripped.upper() and 'VOLATILE' in stripped.upper() and 'TABLE' in stripped.upper():
+                    in_create_statement = True
+                cleaned_lines.append(line)
+            return '\n'.join(cleaned_lines).strip()
+        else:
+            # For other statements, use the regular cleaning method
+            return self._clean_bteq_sql(sql_block)
 
     def extract_table_names(self, sql_block: str) -> Set[str]:
         """Extract table names from SQL block using multiple approaches"""
@@ -384,6 +499,7 @@ class ETLLineageAnalyzer:
                 columns=[],
                 conditions=[],
                 line_number=line_number,
+                sql_statement=statement,
             )
 
         # INSERT INTO
@@ -398,6 +514,7 @@ class ETLLineageAnalyzer:
                 columns=[],
                 conditions=[],
                 line_number=line_number,
+                sql_statement=statement,
             )
 
         # UPDATE (Teradata format: UPDATE alias FROM table alias, (subquery) alias)
@@ -415,6 +532,7 @@ class ETLLineageAnalyzer:
                 columns=[],
                 conditions=[],
                 line_number=line_number,
+                sql_statement=statement,
             )
 
         # Standard UPDATE statement (not Teradata format)
@@ -431,6 +549,7 @@ class ETLLineageAnalyzer:
                 columns=[],
                 conditions=[],
                 line_number=line_number,
+                sql_statement=statement,
             )
 
         return None
@@ -730,31 +849,133 @@ class ETLLineageAnalyzer:
     def export_to_json(
         self, lineage_info: LineageInfo, output_file: Optional[str] = None
     ) -> None:
-        """Export lineage information to JSON format"""
+        """Export lineage information to JSON format with data flows for each table"""
+        
+        # Get all unique tables
+        all_tables = set()
+        all_tables.update(lineage_info.source_tables)
+        all_tables.update(lineage_info.target_tables)
+        
+        # Collect all unique BTEQ statements
+        bteq_statements = []
+        statement_to_index = {}
+        
+        # Process each operation to collect unique statements
+        for operation in lineage_info.operations:
+            # Create cleaned SQL statement (preserving CREATE VOLATILE TABLE)
+            cleaned_statement = self._clean_bteq_sql_for_json(operation.sql_statement)
+            
+            # Skip empty statements
+            if not cleaned_statement.strip():
+                continue
+            
+            # Format the SQL statement using sqlparse
+            import sqlparse
+            try:
+                formatted_statement = sqlparse.format(
+                    cleaned_statement,
+                    reindent=True,
+                    keyword_case='upper',
+                    strip_comments=False,
+                    use_space_around_operators=True,
+                    indent_width=4
+                ).strip()
+            except Exception:
+                # Fallback to original if formatting fails
+                formatted_statement = cleaned_statement
+            
+            # Add to bteq_statements if not already present
+            if formatted_statement not in statement_to_index:
+                statement_to_index[formatted_statement] = len(bteq_statements)
+                bteq_statements.append(formatted_statement)
+        
+        # Initialize data structure for each table
+        tables_data = {}
+        for table in all_tables:
+            tables_data[table] = {
+                "source": [],
+                "target": [],
+                "is_volatile": table in lineage_info.volatile_tables
+            }
+        
+        # Process each operation to build the data flows
+        for operation in lineage_info.operations:
+            operation_type = operation.operation_type
+            target_table = operation.target_table
+            source_tables = operation.source_tables
+            line_number = operation.line_number
+            
+            # Get the cleaned SQL statement
+            cleaned_statement = self._clean_bteq_sql_for_json(operation.sql_statement)
+            
+            # Skip operations that result in empty statements
+            if not cleaned_statement.strip():
+                continue
+            
+            # Format the SQL statement using sqlparse
+            import sqlparse
+            try:
+                formatted_statement = sqlparse.format(
+                    cleaned_statement,
+                    reindent=True,
+                    keyword_case='upper',
+                    strip_comments=False,
+                    use_space_around_operators=True,
+                    indent_width=4
+                ).strip()
+            except Exception:
+                # Fallback to original if formatting fails
+                formatted_statement = cleaned_statement
+            
+            # Get the index of the formatted SQL statement
+            statement_index = statement_to_index[formatted_statement]
+            
+            # Add target relationships (this table is a target)
+            if target_table in tables_data:
+                for source_table in source_tables:
+                    # Check if this source->target relationship already exists
+                    existing_source = None
+                    for source_rel in tables_data[target_table]["source"]:
+                        if source_rel["name"] == source_table:
+                            existing_source = source_rel
+                            break
+                    
+                    if existing_source:
+                        # Add to existing operations list
+                        if statement_index not in existing_source["operation"]:
+                            existing_source["operation"].append(statement_index)
+                    else:
+                        # Create new source relationship
+                        tables_data[target_table]["source"].append({
+                            "name": source_table,
+                            "operation": [statement_index]
+                        })
+            
+            # Add source relationships (source tables have this as a target)
+            for source_table in source_tables:
+                if source_table in tables_data:
+                    # Check if this source->target relationship already exists
+                    existing_target = None
+                    for target_rel in tables_data[source_table]["target"]:
+                        if target_rel["name"] == target_table:
+                            existing_target = target_rel
+                            break
+                    
+                    if existing_target:
+                        # Add to existing operations list
+                        if statement_index not in existing_target["operation"]:
+                            existing_target["operation"].append(statement_index)
+                    else:
+                        # Create new target relationship
+                        tables_data[source_table]["target"].append({
+                            "name": target_table,
+                            "operation": [statement_index]
+                        })
+        
         data = {
             "script_name": lineage_info.script_name,
-            "summary": {
-                "total_operations": len(lineage_info.operations),
-                "source_tables_count": len(lineage_info.source_tables),
-                "target_tables_count": len(lineage_info.target_tables),
-                "volatile_tables_count": len(lineage_info.volatile_tables),
-            },
-            "source_tables": sorted(list(lineage_info.source_tables)),
-            "target_tables": sorted(list(lineage_info.target_tables)),
-            "volatile_tables": lineage_info.volatile_tables,
-            "operations": [
-                {
-                    "operation_type": op.operation_type,
-                    "target_table": op.target_table,
-                    "source_tables": op.source_tables,
-                    "line_number": op.line_number,
-                }
-                for op in lineage_info.operations
-            ],
-            "table_relationships": {
-                target: sources
-                for target, sources in lineage_info.table_relationships.items()
-            },
+            "bteq_statements": bteq_statements,
+            "tables": tables_data
         }
 
         if output_file:
@@ -764,127 +985,67 @@ class ETLLineageAnalyzer:
         else:
             print(json.dumps(data, indent=2))
 
-    def export_to_html(self, lineage_info: LineageInfo, output_file: str) -> None:
-        """Export lineage information to HTML format"""
-        html_content = f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ETL Lineage Report - {lineage_info.script_name}</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        h1 {{ color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }}
-        .summary {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-        .summary h3 {{ margin-top: 0; color: #495057; }}
-        .summary ul {{ list-style: none; padding: 0; }}
-        .summary li {{ margin: 5px 0; padding: 5px 10px; background-color: white; border-radius: 3px; }}
-        .tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
-        .table-section {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; }}
-        .table-section h3 {{ margin-top: 0; color: #495057; }}
-        .table-section ul {{ list-style: none; padding: 0; }}
-        .table-section li {{ margin: 5px 0; padding: 5px 10px; background-color: white; border-radius: 3px; border-left: 3px solid #007bff; }}
-        .operations {{ margin: 20px 0; }}
-        .operation {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #28a745; }}
-        .operation h4 {{ margin-top: 0; color: #495057; }}
-        .relationships {{ margin: 20px 0; }}
-        .relationship {{ background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin: 5px 0; border-left: 3px solid #ffc107; }}
-        .timestamp {{ text-align: center; color: #6c757d; font-size: 0.9em; margin-top: 30px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>ETL Lineage Analysis Report</h1>
-        <p><strong>Script:</strong> {lineage_info.script_name}</p>
-        
-        <div class="summary">
-            <h3>📊 Summary</h3>
-            <ul>
-                <li>Total Operations: {len(lineage_info.operations)}</li>
-                <li>Source Tables: {len(lineage_info.source_tables)}</li>
-                <li>Target Tables: {len(lineage_info.target_tables)}</li>
-                <li>Volatile Tables: {len(lineage_info.volatile_tables)}</li>
-            </ul>
-        </div>
-        
-        <div class="tables">
-            <div class="table-section">
-                <h3>🔍 Source Tables</h3>
-                <ul>
-"""
-
-        for table in sorted(lineage_info.source_tables):
-            html_content += f"                    <li>{table}</li>\n"
-
-        html_content += """
-                </ul>
-            </div>
-            <div class="table-section">
-                <h3>🎯 Target Tables</h3>
-                <ul>
-"""
-
-        for table in sorted(lineage_info.target_tables):
-            html_content += f"                    <li>{table}</li>\n"
-
-        html_content += """
-                </ul>
-            </div>
-            <div class="table-section">
-                <h3>⚡ Volatile Tables (Temporary)</h3>
-                <ul>
-"""
-        for table in sorted(lineage_info.volatile_tables):
-            html_content += f"                    <li>{table}</li>\n"
-
-        html_content += """
-                </ul>
-            </div>
-        </div>
-        
-        <div class="relationships">
-            <h3>🔄 Table Relationships</h3>
-"""
-
-        for target, sources in lineage_info.table_relationships.items():
-            if sources:
-                html_content += f'            <div class="relationship"><strong>{target}</strong> ← {", ".join(sources)}</div>\n'
+    def export_to_bteq_sql(self, lineage_info: LineageInfo, output_file: str) -> None:
+        """Export cleaned BTEQ SQL (without control statements) to a .bteq file"""
+        import sqlparse
+        # Get the original script content
+        script_path = Path(lineage_info.script_name)
+        if not script_path.exists():
+            # Try to find the script in the current directory or common locations
+            possible_paths = [
+                script_path,
+                Path(f"camstar_only/{lineage_info.script_name}"),
+                Path(f"old/Lotmaster_scripts/{lineage_info.script_name}"),
+            ]
+            
+            for path in possible_paths:
+                if path.exists():
+                    script_path = path
+                    break
             else:
-                html_content += f'            <div class="relationship"><strong>{target}</strong> ← (no direct sources)</div>\n'
-
-        html_content += """
-        </div>
+                print(f"⚠️ Warning: Could not find original script file for {lineage_info.script_name}")
+                return
         
-        <div class="operations">
-            <h3>📝 Detailed Operations</h3>
-"""
-
-        for i, operation in enumerate(lineage_info.operations, 1):
-            html_content += f"""
-            <div class="operation">
-                <h4>{i}. {operation.operation_type.upper()}</h4>
-                <p><strong>Target:</strong> {operation.target_table}</p>
-"""
-            if operation.source_tables:
-                html_content += f'                <p><strong>Sources:</strong> {", ".join(operation.source_tables)}</p>\n'
-            html_content += f"                <p><strong>Line:</strong> {operation.line_number}</p>\n            </div>\n"
-
-        html_content += f"""
-        </div>
+        # Read the original script
+        with open(script_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
         
-        <div class="timestamp">
-            Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        </div>
-    </div>
-</body>
-</html>
-"""
+        # Extract and clean SQL blocks
+        sql_blocks = self.extract_sql_blocks(content)
+        if sql_blocks:
+            # Combine all cleaned SQL blocks
+            cleaned_sql = "\n\n".join(sql_blocks)
+            # Remove all lines starting with '.' and all BT/BT; and ET/ET; statements
+            cleaned_lines = []
+            for line in cleaned_sql.splitlines():
+                stripped = line.lstrip()
+                if stripped.startswith('.'):
+                    continue
+                if stripped.upper() == 'BT' or stripped.upper() == 'BT;':
+                    continue
+                if stripped.upper() == 'ET' or stripped.upper() == 'ET;':
+                    continue
+                cleaned_lines.append(line)
+            final_sql = '\n'.join(cleaned_lines)
+            # Format each SQL statement using sqlparse
+            formatted_sql = []
+            for statement in sqlparse.split(final_sql):
+                formatted = sqlparse.format(
+                    statement,
+                    reindent=True,
+                    keyword_case='upper',
+                    strip_comments=False
+                )
+                formatted_sql.append(formatted.strip())
+            pretty_sql = '\n\n'.join(formatted_sql)
+            # Write to .bteq file
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(pretty_sql)
+            print(f"💾 Cleaned BTEQ SQL exported to: {output_file}")
+        else:
+            print(f"⚠️ Warning: No SQL blocks found in {lineage_info.script_name}")
 
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        print(f"💾 HTML report exported to: {output_file}")
+
 
     def process_folder(self, input_folder: str, output_folder: str) -> None:
         """Process all .sh and .ksh files in the input folder and generate reports in the output folder"""
@@ -926,12 +1087,9 @@ class ETLLineageAnalyzer:
                 )
                 self.export_to_json(lineage_info, str(json_file))
 
-                # Generate HTML report with extension included
-                html_file = (
-                    output_path
-                    / f"{script_file.stem}_{script_file.suffix[1:]}_lineage.html"
-                )
-                self.export_to_html(lineage_info, str(html_file))
+                # Generate BTEQ SQL file
+                bteq_file = output_path / f"{script_file.stem}.bteq"
+                self.export_to_bteq_sql(lineage_info, str(bteq_file))
 
                 successful_files.append(script_file.name)
                 print(f"✅ Successfully processed {script_file.name}")
@@ -941,32 +1099,55 @@ class ETLLineageAnalyzer:
                 print(f"❌ Failed to process {script_file.name}: {e}")
 
         # Generate summary report
-        summary_file = output_path / "processing_summary.txt"
+        summary_file = output_path / "processing_summary.yaml"
         with open(summary_file, "w") as f:
-            f.write(f"ETL Lineage Analysis Summary\n")
-            f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Input folder: {input_folder}\n")
-            f.write(f"Output folder: {output_folder}\n\n")
-            f.write(f"Total files found: {len(script_files)}\n")
-            f.write(f"Successfully processed: {len(successful_files)}\n")
-            f.write(f"Failed to process: {len(failed_files)}\n\n")
+            f.write(f"# ETL Lineage Analysis Summary\n")
+            f.write(f"generated_on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"input_folder: {input_folder}\n")
+            f.write(f"output_folder: {output_folder}\n\n")
+            f.write(f"statistics:\n")
+            f.write(f"  total_files_found: {len(script_files)}\n")
+            f.write(f"  successfully_processed: {len(successful_files)}\n")
+            f.write(f"  failed_to_process: {len(failed_files)}\n\n")
 
             if successful_files:
-                f.write("Successfully processed files:\n")
+                f.write("successfully_processed_files:\n")
                 for file in successful_files:
                     f.write(f"  - {file}\n")
                 f.write("\n")
 
             if failed_files:
-                f.write("Failed files:\n")
+                f.write("failed_files:\n")
                 for file, error in failed_files:
-                    f.write(f"  - {file}: {error}\n")
+                    f.write(f"  - file: {file}\n")
+                    f.write(f"    error: {error}\n")
 
         print(f"\n📊 Processing Summary:")
         print(f"   • Total files: {len(script_files)}")
         print(f"   • Successful: {len(successful_files)}")
         print(f"   • Failed: {len(failed_files)}")
         print(f"   • Summary report: {summary_file}")
+
+        # Generate list of JSON files (sorted alphabetically)
+        json_files_list = output_path / "all_lineage.txt"
+        with open(json_files_list, "w") as f:
+            # Create list of JSON filenames and sort them alphabetically
+            json_filenames = []
+            for file in successful_files:
+                # Extract the base name and create the JSON filename
+                base_name = Path(file).stem
+                extension = Path(file).suffix[1:]  # Remove the dot
+                json_filename = f"{base_name}_{extension}_lineage.json"
+                json_filenames.append(json_filename)
+            
+            # Sort the filenames alphabetically
+            json_filenames.sort()
+            
+            # Write the sorted filenames to the file
+            for json_filename in json_filenames:
+                f.write(f"{json_filename}\n")
+        
+        print(f"   • JSON files list: {json_files_list}")
 
 
 def main() -> None:
@@ -979,12 +1160,12 @@ Examples:
   # Process all .sh, .ksh, and .sql files in a folder
   python lineage.py old/Lotmaster_scripts/ reports/
   
-  # Analyze a single file
-  python lineage.py BatchTrack.sh --export lineage.json
-  python lineage.py my_etl.sql --export lineage.json
+  # Analyze a single file with output folder
+  python lineage.py BatchTrack.sh output_folder/
+  python lineage.py my_etl.sql output_folder/
   
-  # Output lineage data in JSON format only
-  python lineage.py BatchTrack.sh --json
+  # Analyze a single file with specific export file
+  python lineage.py BatchTrack.sh --export lineage.json
         """,
     )
 
@@ -996,18 +1177,14 @@ Examples:
     parser.add_argument(
         "output_folder",
         nargs="?",
-        help="Output folder for reports (required when processing folders)",
+        help="Output folder for reports (creates JSON and .bteq files)",
     )
 
     parser.add_argument(
-        "--export", help="Export lineage data to JSON file (for single file mode)"
+        "--export", help="Export lineage data to specific JSON file (for single file mode)"
     )
 
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output lineage data in JSON format only (for single file mode)",
-    )
+
 
     args = parser.parse_args()
 
@@ -1018,20 +1195,35 @@ Examples:
         # Check if input is a file or folder
         if input_path.is_file():
             # Single file mode
-            if not args.output_folder and not args.export and not args.json:
-                # Default behavior: print report
-                lineage_info = analyzer.analyze_script(args.input)
-                analyzer.print_lineage_report(lineage_info)
-            elif args.json:
-                # JSON output only
+            if not args.output_folder and not args.export:
+                # Default behavior: output JSON to stdout
                 lineage_info = analyzer.analyze_script(args.input)
                 analyzer.export_to_json(lineage_info)
             elif args.export:
                 # Export to specified file
                 lineage_info = analyzer.analyze_script(args.input)
                 analyzer.export_to_json(lineage_info, args.export)
+            elif args.output_folder:
+                # Export to output folder (creates both JSON and .bteq files)
+                output_path = Path(args.output_folder)
+                output_path.mkdir(parents=True, exist_ok=True)
+                
+                lineage_info = analyzer.analyze_script(args.input)
+                
+                # Generate JSON file
+                script_name = Path(args.input).stem
+                json_file = output_path / f"{script_name}_lineage.json"
+                analyzer.export_to_json(lineage_info, str(json_file))
+                
+                # Generate BTEQ SQL file
+                bteq_file = output_path / f"{script_name}.bteq"
+                analyzer.export_to_bteq_sql(lineage_info, str(bteq_file))
+                
+                print(f"✅ Analysis complete! Files saved to {args.output_folder}/")
+                print(f"   • {json_file.name} - Lineage data")
+                print(f"   • {bteq_file.name} - Cleaned BTEQ SQL")
             else:
-                print("❌ Error: For single file mode, use --export or --json flags")
+                print("❌ Error: For single file mode, use --export or specify output folder")
                 sys.exit(1)
 
         elif input_path.is_dir():

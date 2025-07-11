@@ -1,0 +1,14 @@
+# ETL Lineage Analysis Summary
+generated_on: 2025-07-11 15:46:02
+input_folder: samples
+output_folder: report
+
+statistics:
+  total_files_found: 2
+  successfully_processed: 2
+  failed_to_process: 0
+
+successfully_processed_files:
+  - sample.sh
+  - sample.sql
+

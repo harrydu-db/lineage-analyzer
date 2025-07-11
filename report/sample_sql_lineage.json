@@ -1,99 +1,207 @@
 {
   "script_name": "sample.sql",
-  "summary": {
-    "total_operations": 5,
-    "source_tables_count": 7,
-    "target_tables_count": 5,
-    "volatile_tables_count": 1
-  },
-  "source_tables": [
-    "CUSTOMER_REPORTING",
-    "CUSTOMER_SUMMARY",
-    "ORDER_FACT",
-    "REGION_DIM",
-    "SALES_REP_DIM",
-    "SEGMENT_REF",
-    "TEMP_CUSTOMER_DATA"
+  "bteq_statements": [
+    "CREATE VOLATILE TABLE TEMP_CUSTOMER_DATA AS\n    (SELECT DISTINCT c.customer_id,\n                     c.customer_name,\n                     c.customer_type,\n                     o.order_id,\n                     o.order_date,\n                     o.total_amount\n     FROM CUSTOMER_DIM c\n     LEFT OUTER JOIN ORDER_FACT o ON c.customer_id = o.customer_id\n     WHERE o.order_date >= CURRENT_DATE - 30\n         AND c.customer_status = 'ACTIVE') WITH DATA ON\nCOMMIT PRESERVE ROWS;",
+    "UPDATE A\nFROM CUSTOMER_SUMMARY A,\n\n    (SELECT customer_id,\n            COUNT(*) AS order_count,\n            SUM(total_amount) AS total_spent\n     FROM TEMP_CUSTOMER_DATA\n     GROUP BY customer_id) B\nSET order_count = B.order_count,\n    total_spent = B.total_spent,\n    last_updated = CURRENT_TIMESTAMP\nWHERE A.customer_id = B.customer_id;",
+    "INSERT INTO CUSTOMER_DETAILS (customer_id, customer_name, customer_type, order_count, total_spent, created_date, last_updated)\nSELECT customer_id,\n       customer_name,\n       customer_type,\n       COUNT(*) AS order_count,\n       SUM(total_amount) AS total_spent,\n       CURRENT_DATE AS created_date,\n                       CURRENT_TIMESTAMP AS last_updated\nFROM TEMP_CUSTOMER_DATA\nGROUP BY customer_id,\n         customer_name,\n         customer_type;",
+    "INSERT INTO CUSTOMER_REPORTING (report_date, customer_id, customer_name, customer_segment, order_count, total_spent, region, sales_rep)\nSELECT CURRENT_DATE AS report_date,\n                       c.customer_id,\n                       c.customer_name,\n                       s.segment_name AS customer_segment,\n                       COUNT(o.order_id) AS order_count,\n                       SUM(o.total_amount) AS total_spent,\n                       r.region_name AS region,\n                       sr.rep_name AS sales_rep\nFROM TEMP_CUSTOMER_DATA c\nLEFT OUTER JOIN SEGMENT_REF s ON c.customer_type = s.customer_type\nLEFT OUTER JOIN ORDER_FACT o ON c.customer_id = o.customer_id\nLEFT OUTER JOIN REGION_DIM r ON o.region_id = r.region_id\nLEFT OUTER JOIN SALES_REP_DIM sr ON o.rep_id = sr.rep_id\nWHERE o.order_date >= CURRENT_DATE - 90\nGROUP BY c.customer_id,\n         c.customer_name,\n         s.segment_name,\n         r.region_name,\n         sr.rep_name;",
+    "INSERT INTO ETL_AUDIT_LOG (process_name, TABLE_NAME, record_count, process_date, status)\nSELECT 'CUSTOMER_ETL' AS process_name,\n       'CUSTOMER_REPORTING' AS TABLE_NAME,\n       COUNT(*) AS record_count,\n       CURRENT_DATE AS process_date,\n                       'COMPLETED' AS status\nFROM CUSTOMER_REPORTING\nWHERE report_date = CURRENT_DATE;"
   ],
-  "target_tables": [
-    "CUSTOMER_DETAILS",
-    "CUSTOMER_REPORTING",
-    "CUSTOMER_SUMMARY",
-    "ETL_AUDIT_LOG",
-    "TEMP_CUSTOMER_DATA"
-  ],
-  "volatile_tables": [
-    "TEMP_CUSTOMER_DATA"
-  ],
-  "operations": [
-    {
-      "operation_type": "CREATE_VOLATILE",
-      "target_table": "TEMP_CUSTOMER_DATA",
-      "source_tables": [
-        "ORDER_FACT",
-        "CUSTOMER_DIM"
+  "tables": {
+    "CUSTOMER_SUMMARY": {
+      "source": [
+        {
+          "name": "CUSTOMER_SUMMARY",
+          "operation": [
+            1
+          ]
+        },
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            1
+          ]
+        }
       ],
-      "line_number": 1
+      "target": [
+        {
+          "name": "CUSTOMER_SUMMARY",
+          "operation": [
+            1
+          ]
+        }
+      ],
+      "is_volatile": false
     },
-    {
-      "operation_type": "UPDATE",
-      "target_table": "CUSTOMER_SUMMARY",
-      "source_tables": [
-        "TEMP_CUSTOMER_DATA",
-        "CUSTOMER_SUMMARY"
+    "CUSTOMER_REPORTING": {
+      "source": [
+        {
+          "name": "REGION_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SEGMENT_REF",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SALES_REP_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "ORDER_FACT",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 12
+      "target": [
+        {
+          "name": "ETL_AUDIT_LOG",
+          "operation": [
+            4
+          ]
+        }
+      ],
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "CUSTOMER_DETAILS",
-      "source_tables": [
-        "TEMP_CUSTOMER_DATA"
+    "ETL_AUDIT_LOG": {
+      "source": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            4
+          ]
+        }
       ],
-      "line_number": 20
+      "target": [],
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "CUSTOMER_REPORTING",
-      "source_tables": [
-        "SEGMENT_REF",
-        "ORDER_FACT",
-        "SALES_REP_DIM",
-        "REGION_DIM",
-        "TEMP_CUSTOMER_DATA"
+    "REGION_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 33
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "ETL_AUDIT_LOG",
-      "source_tables": [
-        "CUSTOMER_REPORTING"
+    "SEGMENT_REF": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 57
+      "is_volatile": false
+    },
+    "SALES_REP_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "CUSTOMER_DETAILS": {
+      "source": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            2
+          ]
+        }
+      ],
+      "target": [],
+      "is_volatile": false
+    },
+    "TEMP_CUSTOMER_DATA": {
+      "source": [
+        {
+          "name": "CUSTOMER_DIM",
+          "operation": [
+            0
+          ]
+        },
+        {
+          "name": "ORDER_FACT",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "CUSTOMER_SUMMARY",
+          "operation": [
+            1
+          ]
+        },
+        {
+          "name": "CUSTOMER_DETAILS",
+          "operation": [
+            2
+          ]
+        },
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": true
+    },
+    "CUSTOMER_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "ORDER_FACT": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            0
+          ]
+        },
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
     }
-  ],
-  "table_relationships": {
-    "TEMP_CUSTOMER_DATA": [
-      "ORDER_FACT",
-      "CUSTOMER_DIM"
-    ],
-    "CUSTOMER_SUMMARY": [
-      "TEMP_CUSTOMER_DATA",
-      "CUSTOMER_SUMMARY"
-    ],
-    "CUSTOMER_DETAILS": [
-      "TEMP_CUSTOMER_DATA"
-    ],
-    "CUSTOMER_REPORTING": [
-      "SEGMENT_REF",
-      "ORDER_FACT",
-      "SALES_REP_DIM",
-      "REGION_DIM",
-      "TEMP_CUSTOMER_DATA"
-    ],
-    "ETL_AUDIT_LOG": [
-      "CUSTOMER_REPORTING"
-    ]
   }
 }

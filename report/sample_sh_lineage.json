@@ -1,99 +1,207 @@
 {
   "script_name": "sample.sh",
-  "summary": {
-    "total_operations": 5,
-    "source_tables_count": 7,
-    "target_tables_count": 5,
-    "volatile_tables_count": 1
-  },
-  "source_tables": [
-    "CATEGORY_REF",
-    "PRODUCT_SUMMARY",
-    "REGION_DIM",
-    "SALES_CHANNEL_DIM",
-    "SALES_FACT",
-    "SALES_REPORTING",
-    "TEMP_SALES_DATA"
+  "bteq_statements": [
+    "CREATE VOLATILE TABLE TEMP_SALES_DATA AS\n    (SELECT DISTINCT p.product_id,\n                     p.product_name,\n                     p.category,\n                     s.sale_id,\n                     s.sale_date,\n                     s.quantity,\n                     s.unit_price,\n                     s.total_amount\n     FROM PRODUCT_DIM p\n     LEFT OUTER JOIN SALES_FACT s ON p.product_id = s.product_id\n     WHERE s.sale_date >= CURRENT_DATE - 60\n         AND p.product_status = 'ACTIVE') WITH DATA ON\nCOMMIT PRESERVE ROWS;",
+    "UPDATE A\nFROM PRODUCT_SUMMARY A,\n\n    (SELECT product_id,\n            COUNT(*) AS sale_count,\n            SUM(total_amount) AS total_revenue\n     FROM TEMP_SALES_DATA\n     GROUP BY product_id) B\nSET sale_count = B.sale_count,\n    total_revenue = B.total_revenue,\n    last_updated = CURRENT_TIMESTAMP\nWHERE A.product_id = B.product_id;",
+    "INSERT INTO PRODUCT_DETAILS (product_id, product_name, category, sale_count, total_revenue, created_date, last_updated)\nSELECT product_id,\n       product_name,\n       category,\n       COUNT(*) AS sale_count,\n       SUM(total_amount) AS total_revenue,\n       CURRENT_DATE AS created_date,\n                       CURRENT_TIMESTAMP AS last_updated\nFROM TEMP_SALES_DATA\nGROUP BY product_id,\n         product_name,\n         category;",
+    "INSERT INTO SALES_REPORTING (report_date, product_id, product_name, category_name, sale_count, total_revenue, region, sales_channel)\nSELECT CURRENT_DATE AS report_date,\n                       p.product_id,\n                       p.product_name,\n                       c.category_name,\n                       COUNT(s.sale_id) AS sale_count,\n                       SUM(s.total_amount) AS total_revenue,\n                       r.region_name AS region,\n                       sc.channel_name AS sales_channel\nFROM TEMP_SALES_DATA p\nLEFT OUTER JOIN CATEGORY_REF c ON p.category = c.category_code\nLEFT OUTER JOIN SALES_FACT s ON p.product_id = s.product_id\nLEFT OUTER JOIN REGION_DIM r ON s.region_id = r.region_id\nLEFT OUTER JOIN SALES_CHANNEL_DIM sc ON s.channel_id = sc.channel_id\nWHERE s.sale_date >= CURRENT_DATE - 90\nGROUP BY p.product_id,\n         p.product_name,\n         c.category_name,\n         r.region_name,\n         sc.channel_name;",
+    "INSERT INTO ETL_AUDIT_LOG (process_name, TABLE_NAME, record_count, process_date, status)\nSELECT 'SALES_ETL' AS process_name,\n       'SALES_REPORTING' AS TABLE_NAME,\n       COUNT(*) AS record_count,\n       CURRENT_DATE AS process_date,\n                       'COMPLETED' AS status\nFROM SALES_REPORTING\nWHERE report_date = CURRENT_DATE;"
   ],
-  "target_tables": [
-    "ETL_AUDIT_LOG",
-    "PRODUCT_DETAILS",
-    "PRODUCT_SUMMARY",
-    "SALES_REPORTING",
-    "TEMP_SALES_DATA"
-  ],
-  "volatile_tables": [
-    "TEMP_SALES_DATA"
-  ],
-  "operations": [
-    {
-      "operation_type": "CREATE_VOLATILE",
-      "target_table": "TEMP_SALES_DATA",
-      "source_tables": [
-        "SALES_FACT",
-        "PRODUCT_DIM"
+  "tables": {
+    "ETL_AUDIT_LOG": {
+      "source": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            4
+          ]
+        }
       ],
-      "line_number": 5
+      "target": [],
+      "is_volatile": false
     },
-    {
-      "operation_type": "UPDATE",
-      "target_table": "PRODUCT_SUMMARY",
-      "source_tables": [
-        "TEMP_SALES_DATA",
-        "PRODUCT_SUMMARY"
+    "PRODUCT_DETAILS": {
+      "source": [
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            2
+          ]
+        }
       ],
-      "line_number": 24
+      "target": [],
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "PRODUCT_DETAILS",
-      "source_tables": [
-        "TEMP_SALES_DATA"
+    "SALES_FACT": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            0
+          ]
+        },
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 35
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "SALES_REPORTING",
-      "source_tables": [
-        "SALES_CHANNEL_DIM",
-        "TEMP_SALES_DATA",
-        "CATEGORY_REF",
-        "SALES_FACT",
-        "REGION_DIM"
+    "SALES_REPORTING": {
+      "source": [
+        {
+          "name": "SALES_FACT",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "REGION_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SALES_CHANNEL_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "CATEGORY_REF",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 51
+      "target": [
+        {
+          "name": "ETL_AUDIT_LOG",
+          "operation": [
+            4
+          ]
+        }
+      ],
+      "is_volatile": false
     },
-    {
-      "operation_type": "INSERT",
-      "target_table": "ETL_AUDIT_LOG",
-      "source_tables": [
-        "SALES_REPORTING"
+    "REGION_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
       ],
-      "line_number": 79
+      "is_volatile": false
+    },
+    "SALES_CHANNEL_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "CATEGORY_REF": {
+      "source": [],
+      "target": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "PRODUCT_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "PRODUCT_SUMMARY": {
+      "source": [
+        {
+          "name": "PRODUCT_SUMMARY",
+          "operation": [
+            1
+          ]
+        },
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            1
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "PRODUCT_SUMMARY",
+          "operation": [
+            1
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "TEMP_SALES_DATA": {
+      "source": [
+        {
+          "name": "PRODUCT_DIM",
+          "operation": [
+            0
+          ]
+        },
+        {
+          "name": "SALES_FACT",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "PRODUCT_SUMMARY",
+          "operation": [
+            1
+          ]
+        },
+        {
+          "name": "PRODUCT_DETAILS",
+          "operation": [
+            2
+          ]
+        },
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": true
     }
-  ],
-  "table_relationships": {
-    "TEMP_SALES_DATA": [
-      "SALES_FACT",
-      "PRODUCT_DIM"
-    ],
-    "PRODUCT_SUMMARY": [
-      "TEMP_SALES_DATA",
-      "PRODUCT_SUMMARY"
-    ],
-    "PRODUCT_DETAILS": [
-      "TEMP_SALES_DATA"
-    ],
-    "SALES_REPORTING": [
-      "SALES_CHANNEL_DIM",
-      "TEMP_SALES_DATA",
-      "CATEGORY_REF",
-      "SALES_FACT",
-      "REGION_DIM"
-    ],
-    "ETL_AUDIT_LOG": [
-      "SALES_REPORTING"
-    ]
   }
 }

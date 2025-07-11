@@ -5,7 +5,7 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![CI](https://github.com/harrydu-db/lineage-analyzer/workflows/CI/badge.svg)](https://github.com/harrydu-db/lineage-analyzer/actions)
 
-A Python tool for analyzing ETL shell scripts and SQL files to extract data lineage information, identifying source tables, target tables, and the relationships between them.
+A Python tool for analyzing ETL shell scripts and SQL files to extract data lineage information, identifying source tables, target tables, and the relationships between them. Includes an interactive HTML viewer for exploring lineage relationships.
 
 ## 🚀 Quick Start
 
@@ -20,17 +20,49 @@ pip install -e .
 
 # Analyze your ETL scripts
 lineage-analyzer your_scripts_folder/ output_reports/
+
+# Open the interactive HTML viewer
+open src/lineage_viewer.html
 ```
 
 ## Features
 
 - **Batch Processing**: Process all `.sh`, `.ksh`, and `.sql` files in a folder automatically
 - **Multiple Output Formats**: Generate JSON, HTML, and text reports
+- **Interactive HTML Viewer**: Modern web-based interface for exploring lineage relationships
+- **Network Visualization**: Interactive network diagram showing data flow between tables
 - **Robust SQL Parsing**: Handles complex Teradata SQL with subqueries, aliases, and nested operations
 - **Comprehensive Analysis**: Extracts source tables, target tables, volatile tables, and operation details
 - **Line Number Tracking**: Provides accurate line numbers for each operation
 - **Table Relationship Mapping**: Shows data flow between tables
 - **Multiple File Types**: Supports shell scripts (`.sh`, `.ksh`) and direct SQL files (`.sql`)
+
+## Interactive HTML Viewer
+
+The lineage analyzer includes a modern, interactive HTML viewer that provides:
+
+### **Three-Tab Interface:**
+1. **📋 Tables Tab** - Browse table relationships and lineage details
+2. **🔧 Statements Tab** - View formatted BTEQ SQL statements
+3. **🕸️ Network View Tab** - Interactive network visualization of data flow
+
+### **Network Visualization Features:**
+- **Interactive Nodes**: Click tables to highlight connections
+- **Edge Details**: Click edges to see the SQL statements that create data flows
+- **Side Panel**: Detailed view of SQL statements for each relationship
+- **Full-Width Layout**: Optimized for large lineage diagrams
+
+### **Usage:**
+```bash
+# Generate JSON data
+python src/lineage.py your_script.sh report_folder/
+
+# Open the HTML viewer
+open src/lineage_viewer.html
+
+# Or load directly with URL parameter
+open "src/lineage_viewer.html?json=report_folder/your_script_lineage.json"
+```
 
 ## Installation
 
@@ -47,12 +79,12 @@ lineage-analyzer your_scripts_folder/ output_reports/
 Process all `.sh`, `.ksh`, and `.sql` files in a folder:
 
 ```bash
-python lineage.py <input_folder> <output_folder>
+python src/lineage.py <input_folder> <output_folder>
 ```
 
 **Example:**
 ```bash
-python lineage.py old/Lotmaster_scripts/ reports/
+python src/lineage.py old/Lotmaster_scripts/ reports/
 ```
 
 This will:
@@ -66,16 +98,12 @@ Analyze a single ETL script or SQL file:
 
 ```bash
 # Print detailed report to console
-python lineage.py BatchTrack.sh
-python lineage.py my_etl.sql
+python src/lineage.py BatchTrack.sh
+python src/lineage.py my_etl.sql
 
 # Export to JSON file
-python lineage.py BatchTrack.sh --export lineage.json
-python lineage.py my_etl.sql --export lineage.json
-
-# Output JSON only (no console report)
-python lineage.py BatchTrack.sh --json
-python lineage.py my_etl.sql --json
+python src/lineage.py BatchTrack.sh report_folder/
+python src/lineage.py my_etl.sql report_folder/
 ```
 
 ## Supported File Types
@@ -181,33 +209,26 @@ Script: BatchTrack.sh
 ```json
 {
   "script_name": "etl_script.sh",
-  "summary": {
-    "total_operations": 12,
-    "source_tables_count": 7,
-    "target_tables_count": 8,
-    "volatile_tables_count": 1
-  },
-  "source_tables": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary", "warehouse.inventory", "external.vendor_data", "temp.processed_orders", "archive.old_records"],
-  "target_tables": ["temp.staging_table", "warehouse.final_customer_table", "analytics.monthly_report", "staging.processed_data", "warehouse.aggregated_sales", "temp.intermediate_result", "analytics.dashboard_data", "warehouse.clean_data"],
-  "volatile_tables": ["temp.staging_table"],
-  "operations": [
-    {
-      "operation_type": "CREATE_VOLATILE",
-      "target_table": "temp.staging_table",
-      "source_tables": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary"],
-      "line_number": 6
-    },
-    {
-      "operation_type": "INSERT",
-      "target_table": "warehouse.final_customer_table",
-      "source_tables": ["temp.staging_table", "warehouse.inventory"],
-      "line_number": 15
-    }
+  "bteq_statements": [
+    "CREATE MULTISET VOLATILE TABLE temp.staging_table AS\n    (SELECT ...)",
+    "INSERT INTO warehouse.final_customer_table\nSELECT ..."
   ],
-  "table_relationships": {
-    "temp.staging_table": ["staging.customer_data", "reference.product_catalog", "analytics.sales_summary"],
-    "warehouse.final_customer_table": ["temp.staging_table", "warehouse.inventory"],
-    "analytics.monthly_report": ["warehouse.final_customer_table", "external.vendor_data"]
+  "tables": {
+    "temp.staging_table": {
+      "source": [
+        {
+          "name": "staging.customer_data",
+          "operation": [0]
+        }
+      ],
+      "target": [
+        {
+          "name": "warehouse.final_customer_table",
+          "operation": [1]
+        }
+      ],
+      "is_volatile": true
+    }
   }
 }
 ```
@@ -304,6 +325,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - Built with [sqlparse](https://github.com/andialbrecht/sqlparse) for SQL parsing
+- Network visualization powered by [vis.js](https://visjs.org/)
 - Inspired by the need for better ETL documentation and lineage tracking
 - Thanks to all contributors and users of this project
 
