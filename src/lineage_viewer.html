@@ -719,6 +719,7 @@
                             <button onclick="searchNetworkNode()" style="padding: 8px 16px; border-radius: 4px; border: none; background: #007bff; color: white; font-weight: bold; cursor: pointer;">Search</button>
                             <button onclick="clearNetworkNodeSearch()" style="padding: 8px 16px; border-radius: 4px; border: none; background: #6c757d; color: white; font-weight: bold; cursor: pointer;">Clear</button>
                         </div>
+                        <div id="selectedScriptLabel" style="font-size:1.2em; font-weight:bold; color:#1976d2; margin-bottom:8px; display:none;"></div>
                         <div id="networkContainer" style="height: 600px; border: 1px solid #dee2e6; border-radius: 8px;"></div>
                         <div id="networkSidePanel" style="width: 400px; background: #f8f9fa; border-left: 1px solid #dee2e6; padding: 20px; overflow-y: auto; display: none; position: absolute; top: 0; right: 0; height: 100%;">
                             <h3 id="sidePanelTitle">Edge Details</h3>
@@ -753,43 +754,96 @@
         let selectedTable = null;
         let network = null;
 
-        // Helper function to get script name and local index for a statement
-        function getStatementInfo(globalIndex) {
-            if (!lineageData.file_groups) {
-                // Single file mode - use the source file name
-                const scriptName = lineageData.source_file || 'Unknown';
-                return {
-                    scriptName: scriptName,
-                    localIndex: globalIndex,
-                    displayText: `${scriptName} : ${globalIndex}`
-                };
-            }
-            
-            // Multi-file mode - find which file contains this statement
-            for (const [fileName, fileGroup] of Object.entries(lineageData.file_groups)) {
-                if (fileGroup.statements.includes(globalIndex)) {
-                    const localIndex = fileGroup.statements.indexOf(globalIndex);
-                    return {
-                        scriptName: fileName,
-                        localIndex: localIndex,
-                        displayText: `${fileName} : ${localIndex}`
-                    };
+        // Track the currently selected script in the network view
+        let selectedNetworkScript = null;
+
+        // Mappings for fast lookup
+        let tableKeyMap = {};
+        let operationKeyMap = {};
+
+        // Build mappings after data load
+        function buildScriptAwareMappings() {
+            tableKeyMap = {};
+            operationKeyMap = {};
+            if (!lineageData || !lineageData.tables) return;
+            // Build tableKeyMap
+            for (const [tableName, tableObj] of Object.entries(lineageData.tables)) {
+                const scriptName = tableObj.script_name || 'Unknown';
+                const key = scriptName + '::' + tableName;
+                tableKeyMap[key] = tableObj;
+                // Build operationKeyMap for sources
+                if (tableObj.source) {
+                    tableObj.source.forEach(rel => {
+                        if (rel.operation) {
+                            rel.operation.forEach(opIdx => {
+                                const opKey = scriptName + '::' + opIdx;
+                                operationKeyMap[opKey] = lineageData.bteq_statements[opIdx];
+                            });
+                        }
+                    });
+                }
+                // Build operationKeyMap for targets
+                if (tableObj.target) {
+                    tableObj.target.forEach(rel => {
+                        if (rel.operation) {
+                            rel.operation.forEach(opIdx => {
+                                const opKey = scriptName + '::' + opIdx;
+                                operationKeyMap[opKey] = lineageData.bteq_statements[opIdx];
+                            });
+                        }
+                    });
                 }
             }
-            
+        }
+
+        // Call buildScriptAwareMappings after data load
+        // (add this call in all data load functions, e.g., after lineageData is set)
+
+        // Helper function to get script name and local index for a statement
+        function getStatementInfo(globalIndex) {
+            // Find the script and local index for this operation index
+            for (const [tableName, tableObj] of Object.entries(lineageData.tables)) {
+                const scriptName = tableObj.script_name || 'Unknown';
+                // Check if this table's script has this op index
+                if (lineageData.file_groups) {
+                    for (const [fileName, fileGroup] of Object.entries(lineageData.file_groups)) {
+                        if (fileGroup.statements.includes(globalIndex) && tableObj.script_name) {
+                            const localIndex = fileGroup.statements.indexOf(globalIndex);
+                            return {
+                                scriptName: scriptName,
+                                localIndex: localIndex,
+                                displayText: `${scriptName}:${localIndex}`,
+                                operationKey: scriptName + '::' + globalIndex
+                            };
+                        }
+                    }
+                } else {
+                    // Single file mode
+                    if (tableObj.script_name) {
+                        return {
+                            scriptName: scriptName,
+                            localIndex: globalIndex,
+                            displayText: `${scriptName}:${globalIndex}`,
+                            operationKey: scriptName + '::' + globalIndex
+                        };
+                    }
+                }
+            }
             // Fallback
             return {
                 scriptName: 'Unknown',
                 localIndex: globalIndex,
-                displayText: `Unknown : ${globalIndex}`
+                displayText: `Unknown:${globalIndex}`,
+                operationKey: 'Unknown::' + globalIndex
             };
         }
 
         // Helper function to convert operation indices to script names with local indices
-        function getOperationDisplayText(operationIndices) {
+        function getOperationDisplayText(operationIndices, scriptName) {
             return operationIndices.map(opIndex => {
-                const statementInfo = getStatementInfo(opIndex);
-                return statementInfo.displayText;
+                // Use the provided scriptName for context
+                const opKey = scriptName + '::' + opIndex;
+                return `${scriptName}:${opIndex}`;
             }).join(', ');
         }
 
@@ -900,9 +954,9 @@
                         const data = JSON.parse(e.target.result);
                         console.log(`Processing file: ${file.name}`);
                         
-                        // Create file group
-                        const fileName = file.name.replace('_lineage.json', '');
-                        mergedData.file_groups[fileName] = {
+                        // Create file group using script_name from the data
+                        const scriptName = data.script_name || file.name.replace('_lineage.json', '');
+                        mergedData.file_groups[scriptName] = {
                             tables: [],
                             statements: []
                         };
@@ -911,7 +965,9 @@
                         if (data.tables) {
                             Object.keys(data.tables).forEach(tableName => {
                                 mergedData.tables[tableName] = data.tables[tableName];
-                                mergedData.file_groups[fileName].tables.push(tableName);
+                                // Add script_name to the table object
+                                mergedData.tables[tableName].script_name = scriptName;
+                                mergedData.file_groups[scriptName].tables.push(tableName);
                             });
                         }
                         
@@ -922,7 +978,7 @@
                             
                             // Track statement indices for this file
                             for (let i = 0; i < data.bteq_statements.length; i++) {
-                                mergedData.file_groups[fileName].statements.push(startIndex + i);
+                                mergedData.file_groups[scriptName].statements.push(startIndex + i);
                             }
                         }
                         
@@ -933,6 +989,7 @@
                         if (processedFiles === totalFiles) {
                             console.log(`Successfully merged ${totalFiles} files`);
                             lineageData = mergedData;
+                            buildScriptAwareMappings();
                             displaySummary();
                             displayTables();
                             displayStatements();
@@ -1146,12 +1203,61 @@
             const volatileTables = Object.values(tables).filter(t => t.is_volatile).length;
             const totalOperations = lineageData.bteq_statements.length;
 
-            // Add source file information if available
-            const sourceInfo = lineageData.source_file ? 
-                `<div class="summary-card">
-                    <h3>Source (Scripts)</h3>
-                    <div class="number">${lineageData.source_file}</div>
-                </div>` : '';
+            // Determine script count and display name(s)
+            let scriptCount = 1;
+            let scriptDisplay = '';
+            if (lineageData.file_groups && Object.keys(lineageData.file_groups).length > 1) {
+                scriptCount = Object.keys(lineageData.file_groups).length;
+                scriptDisplay = '';
+            } else if (lineageData.file_groups && Object.keys(lineageData.file_groups).length === 1) {
+                // Single file mode, show cleaned-up script name
+                let src = Object.keys(lineageData.file_groups)[0];
+                // Remove path if present
+                src = src.split('/').pop();
+                // Remove .json extension
+                src = src.replace(/\.json$/i, '');
+                // Convert *_sh_lineage or *_ksh_lineage to .sh/.ksh
+                if (src.match(/_sh_lineage$/i)) {
+                    src = src.replace(/_sh_lineage$/i, '.sh');
+                } else if (src.match(/_ksh_lineage$/i)) {
+                    src = src.replace(/_ksh_lineage$/i, '.ksh');
+                } else if (src.match(/_sql_lineage$/i)) {
+                    src = src.replace(/_sql_lineage$/i, '.sql');
+                } else if (src.match(/_lineage$/i)) {
+                    src = src.replace(/_lineage$/i, '');
+                }
+                scriptDisplay = src;
+            } else if (lineageData.source_file) {
+                // Fallback for legacy single file mode
+                let src = lineageData.source_file;
+                src = src.split('/').pop();
+                src = src.replace(/\.json$/i, '');
+                if (src.match(/_sh_lineage$/i)) {
+                    src = src.replace(/_sh_lineage$/i, '.sh');
+                } else if (src.match(/_ksh_lineage$/i)) {
+                    src = src.replace(/_ksh_lineage$/i, '.ksh');
+                } else if (src.match(/_sql_lineage$/i)) {
+                    src = src.replace(/_sql_lineage$/i, '.sql');
+                } else if (src.match(/_lineage$/i)) {
+                    src = src.replace(/_lineage$/i, '');
+                }
+                scriptDisplay = src;
+            }
+
+            // Add scripts card
+            let scriptsInfo = '';
+            if (scriptCount === 1 && scriptDisplay) {
+                scriptsInfo = `<div class="summary-card">
+                    <h3>Scripts</h3>
+                    <div class="number">1</div>
+                    <div style="color:#1976d2; font-size:1.1em; font-weight:bold; margin-top:8px; word-break:break-all;">${scriptDisplay}</div>
+                </div>`;
+            } else {
+                scriptsInfo = `<div class="summary-card">
+                    <h3>Scripts</h3>
+                    <div class="number">${scriptCount}</div>
+                </div>`;
+            }
 
             summaryGrid.innerHTML = `
                 <div class="summary-card">
@@ -1174,7 +1280,7 @@
                     <h3>SQL Operations</h3>
                     <div class="number">${totalOperations}</div>
                 </div>
-                ${sourceInfo}
+                ${scriptsInfo}
             `;
         }
 
@@ -1189,13 +1295,14 @@
                         ${Object.keys(lineageData.file_groups).map(fileName => {
                             const fileGroup = lineageData.file_groups[fileName];
                             const tables = fileGroup.tables.sort();
-                            if (tables.length === 0) return '';
+                            const scriptName = fileName;
                             
+
                             return `
                                 <div class="file-group">
                                     <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-tables')">
                                         <span class="toggle-icon">▶</span>
-                                        <span>📄 ${fileName} (${tables.length})</span>
+                                        <span>📄 ${scriptName} (${tables.length})</span>
                                     </div>
                                     <div class="tree-children" id="${fileName}-tables">
                                         ${tables.map(tableName => {
@@ -1253,23 +1360,39 @@
                             const fileGroup = lineageData.file_groups[fileName];
                             const statements = fileGroup.statements;
                             if (statements.length === 0) return '';
-                            
+
+                            // Use the file group key (fileName) as the script name and clean it up
+                            let scriptName = fileName;
+                            // Remove path if present
+                            scriptName = scriptName.split('/').pop();
+                            // Remove .json extension if present
+                            scriptName = scriptName.replace(/\.json$/i, '');
+                            // Convert *_sh_lineage or *_ksh_lineage to .sh/.ksh
+                            if (scriptName.match(/_sh_lineage$/i)) {
+                                scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
+                            } else if (scriptName.match(/_ksh_lineage$/i)) {
+                                scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
+                            } else if (scriptName.match(/_sql_lineage$/i)) {
+                                scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
+                            } else if (scriptName.match(/_lineage$/i)) {
+                                scriptName = scriptName.replace(/_lineage$/i, '');
+                            }
+
                             return `
                                 <div class="file-group">
                                     <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-statements')">
                                         <span class="toggle-icon">▶</span>
-                                        <span>📄 ${fileName} (${statements.length})</span>
+                                        <span>📄 ${scriptName} (${statements.length})</span>
                                     </div>
                                     <div class="tree-children" id="${fileName}-statements">
                                         ${statements.map(statementIndex => {
                                             const statement = lineageData.bteq_statements[statementIndex];
                                             const firstLine = statement.split('\n')[0].trim();
                                             const displayText = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
-                                            const statementInfo = getStatementInfo(statementIndex);
                                             
                                             return `
                                                 <div class="tree-item" onclick="selectStatement(${statementIndex})">
-                                                    <div style="font-weight: bold;">${statementInfo.displayText}</div>
+                                                    <div style="font-weight: bold;">Statement ${getStatementInfo(statementIndex).displayText}</div>
                                                     <div style="font-size: 0.8em; color: #6c757d;">
                                                         ${displayText}
                                                     </div>
@@ -1318,12 +1441,29 @@
                         const fileGroup = lineageData.file_groups[fileName];
                         const tables = fileGroup.tables;
                         if (tables.length === 0) return '';
-                        
+
+                        // Use the file group key (fileName) as the script name and clean it up
+                        let scriptName = fileName;
+                        // Remove path if present
+                        scriptName = scriptName.split('/').pop();
+                        // Remove .json extension if present
+                        scriptName = scriptName.replace(/\.json$/i, '');
+                        // Convert *_sh_lineage or *_ksh_lineage to .sh/.ksh
+                        if (scriptName.match(/_sh_lineage$/i)) {
+                            scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
+                        } else if (scriptName.match(/_ksh_lineage$/i)) {
+                            scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
+                        } else if (scriptName.match(/_sql_lineage$/i)) {
+                            scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
+                        } else if (scriptName.match(/_lineage$/i)) {
+                            scriptName = scriptName.replace(/_lineage$/i, '');
+                        }
+
                         return `
                             <div class="file-group">
                                 <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-network')">
                                     <span class="toggle-icon">▶</span>
-                                    <span style="cursor:pointer;" onclick="event.stopPropagation(); showFileNetwork('${fileName}')">📄 ${fileName} (${tables.length})</span>
+                                    <span style="cursor:pointer;" onclick="event.stopPropagation(); showFileNetwork('${fileName}')">📄 ${scriptName} (${tables.length})</span>
                                 </div>
                                 <div class="tree-children" id="${fileName}-network">
                                     ${tables.map(tableName => {
@@ -1363,7 +1503,6 @@
             
             selectedTable = tableName;
             displayTableDetails(tableName);
-            showSelectionInfo(`Selected table: ${tableName}`);
         }
 
         function selectStatement(statementIndex) {
@@ -1379,8 +1518,6 @@
             });
             
             displayStatementDetails(statementIndex);
-            const statementInfo = getStatementInfo(statementIndex);
-            showSelectionInfo(`Selected statement: ${statementInfo.displayText}`);
         }
 
         function deselectAll() {
@@ -1390,7 +1527,6 @@
             });
             
             selectedTable = null;
-            hideSelectionInfo();
             
             // Show default content
             const contentArea = document.getElementById('contentArea');
@@ -1418,36 +1554,6 @@
                         </p>
                     </div>
                 `;
-            }
-        }
-
-        function showSelectionInfo(message) {
-            // Create or update selection info bar
-            let selectionInfo = document.getElementById('selectionInfo');
-            if (!selectionInfo) {
-                selectionInfo = document.createElement('div');
-                selectionInfo.id = 'selectionInfo';
-                selectionInfo.className = 'selection-info';
-                selectionInfo.innerHTML = `
-                    <span id="selectionMessage"></span>
-                    <button class="deselect-btn" onclick="deselectAll()">Deselect</button>
-                `;
-                
-                // Insert after the tab navigation
-                const tabNavigation = document.querySelector('.tab-navigation');
-                if (tabNavigation) {
-                    tabNavigation.parentNode.insertBefore(selectionInfo, tabNavigation.nextSibling);
-                }
-            }
-            
-            document.getElementById('selectionMessage').textContent = message;
-            selectionInfo.classList.add('show');
-        }
-
-        function hideSelectionInfo() {
-            const selectionInfo = document.getElementById('selectionInfo');
-            if (selectionInfo) {
-                selectionInfo.classList.remove('show');
             }
         }
 
@@ -1632,7 +1738,7 @@ ${statement}
                     if (!edgeMap.has(edgeKey)) {
                         edgeMap.set(edgeKey, true);
                         
-                        const operations = getOperationDisplayText(sourceRel.operation);
+                        const operations = getOperationDisplayText(sourceRel.operation, table.script_name || 'Unknown');
                         edges.push({
                             from: sourceRel.name,
                             to: tableName,
@@ -1655,7 +1761,7 @@ ${statement}
                     if (!edgeMap.has(edgeKey)) {
                         edgeMap.set(edgeKey, true);
                         
-                        const operations = getOperationDisplayText(targetRel.operation);
+                        const operations = getOperationDisplayText(targetRel.operation, table.script_name || 'Unknown');
                         edges.push({
                             from: tableName,
                             to: targetRel.name,
@@ -1710,15 +1816,12 @@ ${statement}
             // Add click events for nodes and edges
             network.on('click', function(params) {
                 if (params.nodes.length > 0) {
-                    const clickedNode = params.nodes[0];
-                    showDirectlyRelatedNodes(clickedNode);
+                    // Node clicked
                     hideSidePanel();
                 } else if (params.edges.length > 0) {
-                    const clickedEdge = params.edges[0];
-                    showEdgeDetails(clickedEdge);
+                    // Edge clicked
+                    showEdgeDetails(params.edges[0]);
                 } else {
-                    // Clicked on whitespace - show all nodes
-                    showAllNodes();
                     hideSidePanel();
                 }
             });
@@ -1766,9 +1869,9 @@ ${statement}
                             .then(data => {
                                 console.log(`Processing file: ${jsonFile}`);
                                 
-                                // Create file group
-                                const fileName = jsonFile.replace('_lineage.json', '');
-                                mergedData.file_groups[fileName] = {
+                                // Create file group using script_name from the data
+                                const scriptName = data.script_name || jsonFile.replace('_lineage.json', '');
+                                mergedData.file_groups[scriptName] = {
                                     tables: [],
                                     statements: []
                                 };
@@ -1777,7 +1880,9 @@ ${statement}
                                 if (data.tables) {
                                     Object.keys(data.tables).forEach(tableName => {
                                         mergedData.tables[tableName] = data.tables[tableName];
-                                        mergedData.file_groups[fileName].tables.push(tableName);
+                                        // Add script_name to the table object
+                                        mergedData.tables[tableName].script_name = scriptName;
+                                        mergedData.file_groups[scriptName].tables.push(tableName);
                                     });
                                 }
                                 
@@ -1788,7 +1893,7 @@ ${statement}
                                     
                                     // Track statement indices for this file
                                     for (let i = 0; i < data.bteq_statements.length; i++) {
-                                        mergedData.file_groups[fileName].statements.push(startIndex + i);
+                                        mergedData.file_groups[scriptName].statements.push(startIndex + i);
                                     }
                                 }
                                 
@@ -1796,15 +1901,16 @@ ${statement}
                                 
                                 // When all files are processed, update the display
                                 if (processedFiles === totalFiles) {
-                                    console.log(`Successfully merged ${totalFiles} files`);
-                                    lineageData = mergedData;
-                                    displaySummary();
-                                    displayTables();
-                                    displayStatements();
-                                    displayNetworkFileGroups();
-                                    document.getElementById('summarySection').style.display = 'block';
-                                    document.getElementById('tabSection').style.display = 'block';
-                                    initializeTableNames();
+                                                                console.log(`Successfully merged ${totalFiles} files`);
+                            lineageData = mergedData;
+                            buildScriptAwareMappings();
+                            displaySummary();
+                            displayTables();
+                            displayStatements();
+                            displayNetworkFileGroups();
+                            document.getElementById('summarySection').style.display = 'block';
+                            document.getElementById('tabSection').style.display = 'block';
+                            initializeTableNames();
                                 }
                             })
                             .catch(error => {
@@ -1890,7 +1996,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(sourceRel.operation);
+                                const operations = getOperationDisplayText(sourceRel.operation, table.script_name || 'Unknown');
                                 edges.push({
                                     from: sourceRel.name,
                                     to: tableName,
@@ -1914,7 +2020,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(targetRel.operation);
+                                const operations = getOperationDisplayText(targetRel.operation, table.script_name || 'Unknown');
                                 edges.push({
                                     from: tableName,
                                     to: targetRel.name,
@@ -1975,12 +2081,11 @@ ${statement}
             // Add click events for the filtered network
             network.on('click', function(params) {
                 if (params.nodes.length > 0) {
-                    const clickedNode = params.nodes[0];
-                    highlightConnectedNodes(clickedNode);
+                    // Node clicked
                     hideSidePanel();
                 } else if (params.edges.length > 0) {
-                    const clickedEdge = params.edges[0];
-                    showEdgeDetails(clickedEdge);
+                    // Edge clicked
+                    showEdgeDetails(params.edges[0]);
                 } else {
                     hideSidePanel();
                 }
@@ -2020,14 +2125,14 @@ ${statement}
             
             // Add each SQL statement
             operations.forEach((op, index) => {
-                // op is now in the format 'script_name : local_index'
+                // op is now in the format 'script_name:local_index'
                 // We need to find the global index for this op
                 let globalIndex = null;
                 if (lineageData.file_groups) {
                     // Multi-file mode
-                    for (const [fileName, fileGroup] of Object.entries(lineageData.file_groups)) {
-                        const match = op.match(/^(.*) : (\d+)$/);
-                        if (match && match[1] === fileName) {
+                    for (const [scriptName, fileGroup] of Object.entries(lineageData.file_groups)) {
+                        const match = op.match(/^(.*):(\d+)$/);
+                        if (match && match[1] === scriptName) {
                             const localIdx = parseInt(match[2]);
                             globalIndex = fileGroup.statements[localIdx];
                             break;
@@ -2035,7 +2140,7 @@ ${statement}
                     }
                 } else {
                     // Single file mode
-                    const match = op.match(/^(.*) : (\d+)$/);
+                    const match = op.match(/^(.*):(\d+)$/);
                     if (match) {
                         globalIndex = parseInt(match[2]);
                     }
@@ -2059,180 +2164,159 @@ ${sqlStatement}
         }
 
         function showAllTablesNetwork() {
+            selectedNetworkScript = null;
+            updateSelectedScriptLabel();
             createNetworkVisualization();
         }
 
         function showTableNetwork(tableName) {
-            createFilteredNetworkVisualization([tableName]);
+            const table = lineageData.tables[tableName];
+            const scriptName = table.script_name || 'Unknown';
+            const tablePair = [scriptName, tableName];
+            
+            // Only show the table if it belongs to the selected script, if any
+            if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
+                const tables = lineageData.file_groups[selectedNetworkScript].tables;
+                if (tables.includes(tableName)) {
+                    createFilteredNetworkVisualization([tablePair]);
+                }
+            } else {
+                createFilteredNetworkVisualization([tablePair]);
+            }
         }
 
         function showFileNetwork(fileName) {
+            selectedNetworkScript = fileName;
+            updateSelectedScriptLabel();
             if (!lineageData.file_groups || !lineageData.file_groups[fileName]) {
                 return;
             }
             const tables = lineageData.file_groups[fileName].tables;
-            createFilteredNetworkVisualization(tables);
+            const tablePairs = tables.map(tableName => {
+                const table = lineageData.tables[tableName];
+                const scriptName = table.script_name || 'Unknown';
+                return [scriptName, tableName];
+            });
+            createFilteredNetworkVisualization(tablePairs);
         }
 
-        function createFilteredNetworkVisualization(selectedTables) {
+        function createFilteredNetworkVisualization(selectedTablePairs) {
+            // selectedTablePairs: array of [script_name, table_name]
             const container = document.getElementById('networkContainer');
-            
-            // Create nodes (only selected tables and their connected tables)
+            // Deduplicate by script_name + table_name
+            const uniqueTableKeys = new Set(selectedTablePairs.map(pair => pair[0] + '::' + pair[1]));
+            // Create nodes
             const nodes = [];
-            const nodeIds = new Set();
-            const connectedTables = new Set(selectedTables);
-            
-            // Add selected tables and find their connections
-            selectedTables.forEach(tableName => {
-                if (lineageData.tables[tableName]) {
-                    const table = lineageData.tables[tableName];
-                    
-                    // Add source tables
-                    table.source.forEach(sourceRel => {
-                        connectedTables.add(sourceRel.name);
-                    });
-                    
-                    // Add target tables
-                    table.target.forEach(targetRel => {
-                        connectedTables.add(targetRel.name);
-                    });
-                }
-            });
-            
-            // Create nodes for all connected tables
-            connectedTables.forEach(tableName => {
-                if (lineageData.tables[tableName]) {
-                    const table = lineageData.tables[tableName];
-                    nodeIds.add(tableName);
-                    
-                    const isSelected = selectedTables.includes(tableName);
-                    const node = {
-                        id: tableName,
+            uniqueTableKeys.forEach(key => {
+                const table = tableKeyMap[key];
+                if (table) {
+                    const tableName = key.split('::')[1];
+                    nodes.push({
+                        id: key,
                         label: tableName,
                         title: `${tableName}\nSources: ${table.source.length}\nTargets: ${table.target.length}\nVolatile: ${table.is_volatile ? 'Yes' : 'No'}`,
-                        color: isSelected ? '#007bff' : (table.is_volatile ? '#ff9800' : '#28a745'),
-                        size: isSelected ? 30 : (20 + Math.min(table.source.length + table.target.length, 10) * 2),
-                        font: {
-                            size: isSelected ? 16 : 12,
-                            face: 'Arial',
-                            bold: isSelected
-                        },
-                        borderWidth: isSelected ? 3 : 2
-                    };
-                    nodes.push(node);
+                        color: table.is_volatile ? '#ff9800' : '#007bff',
+                        size: 20 + Math.min((table.source?.length || 0) + (table.target?.length || 0), 10) * 2,
+                        font: { size: 12, face: 'Arial' }
+                    });
                 }
             });
-            
-            // Create edges (relationships between connected tables)
+            // Create edges
             const edges = [];
-            const edgeMap = new Map();
+            const edgeMap = new Map(); // To avoid duplicate edges
             
-            connectedTables.forEach(tableName => {
-                if (lineageData.tables[tableName]) {
-                    const table = lineageData.tables[tableName];
-                    
-                    // Add source relationships
-                    table.source.forEach(sourceRel => {
-                        if (connectedTables.has(sourceRel.name)) {
-                            const edgeKey = `${sourceRel.name}->${tableName}`;
-                            if (!edgeMap.has(edgeKey)) {
-                                edgeMap.set(edgeKey, true);
-                                
-                                const operations = getOperationDisplayText(sourceRel.operation);
-                                edges.push({
-                                    from: sourceRel.name,
-                                    to: tableName,
-                                    arrows: 'to',
-                                    color: { color: '#28a745', opacity: 0.8 },
-                                    width: 2,
-                                    title: `Operations: ${operations}`,
-                                    label: operations,
-                                    font: {
-                                        size: 10,
-                                        color: '#28a745'
-                                    }
-                                });
+            uniqueTableKeys.forEach(key => {
+                const table = tableKeyMap[key];
+                if (table) {
+                    // Source relationships
+                    (table.source || []).forEach(rel => {
+                        // Find the related table in the selected set by checking all possible script combinations
+                        let foundSrcKey = null;
+                        for (const selectedKey of uniqueTableKeys) {
+                            const selectedTableName = selectedKey.split('::')[1];
+                            if (selectedTableName === rel.name) {
+                                foundSrcKey = selectedKey;
+                                break;
                             }
+                        }
+                        
+                        if (foundSrcKey) {
+                            rel.operation.forEach(opIdx => {
+                                const edgeKey = `${foundSrcKey}->${key}`;
+                                if (!edgeMap.has(edgeKey)) {
+                                    edgeMap.set(edgeKey, true);
+                                    const opLabel = getOperationDisplayText([opIdx], table.script_name);
+                                    edges.push({
+                                        from: foundSrcKey,
+                                        to: key,
+                                        arrows: 'to',
+                                        color: { color: '#28a745', opacity: 0.8 },
+                                        width: 2,
+                                        title: `Operations: ${opLabel}`,
+                                        label: opLabel,
+                                        font: { size: 10, color: '#28a745' }
+                                    });
+                                }
+                            });
                         }
                     });
                     
-                    // Add target relationships
-                    table.target.forEach(targetRel => {
-                        if (connectedTables.has(targetRel.name)) {
-                            const edgeKey = `${tableName}->${targetRel.name}`;
-                            if (!edgeMap.has(edgeKey)) {
-                                edgeMap.set(edgeKey, true);
-                                
-                                const operations = getOperationDisplayText(targetRel.operation);
-                                edges.push({
-                                    from: tableName,
-                                    to: targetRel.name,
-                                    arrows: 'to',
-                                    color: { color: '#dc3545', opacity: 0.8 },
-                                    width: 2,
-                                    title: `Operations: ${operations}`,
-                                    label: operations,
-                                    font: {
-                                        size: 10,
-                                        color: '#dc3545'
-                                    }
-                                });
+                    // Target relationships
+                    (table.target || []).forEach(rel => {
+                        // Find the related table in the selected set by checking all possible script combinations
+                        let foundTgtKey = null;
+                        for (const selectedKey of uniqueTableKeys) {
+                            const selectedTableName = selectedKey.split('::')[1];
+                            if (selectedTableName === rel.name) {
+                                foundTgtKey = selectedKey;
+                                break;
                             }
+                        }
+                        
+                        if (foundTgtKey) {
+                            rel.operation.forEach(opIdx => {
+                                const edgeKey = `${key}->${foundTgtKey}`;
+                                if (!edgeMap.has(edgeKey)) {
+                                    edgeMap.set(edgeKey, true);
+                                    const opLabel = getOperationDisplayText([opIdx], table.script_name);
+                                    edges.push({
+                                        from: key,
+                                        to: foundTgtKey,
+                                        arrows: 'to',
+                                        color: { color: '#dc3545', opacity: 0.8 },
+                                        width: 2,
+                                        title: `Operations: ${opLabel}`,
+                                        label: opLabel,
+                                        font: { size: 10, color: '#dc3545' }
+                                    });
+                                }
+                            });
                         }
                     });
                 }
             });
-            
-            // Create the network
+            // Render network
             const data = {
                 nodes: new vis.DataSet(nodes),
                 edges: new vis.DataSet(edges)
             };
-            
             const options = {
-                nodes: {
-                    shape: 'box',
-                    borderWidth: 2,
-                    shadow: true
-                },
-                edges: {
-                    smooth: {
-                        type: 'curvedCW',
-                        roundness: 0.2
-                    }
-                },
-                physics: {
-                    enabled: false
-                },
-                interaction: {
-                    hover: true,
-                    tooltipDelay: 200,
-                    zoomView: true,
-                    dragView: true
-                },
-                layout: {
-                    improvedLayout: true
-                }
+                nodes: { shape: 'box', borderWidth: 2, shadow: true },
+                edges: { smooth: { type: 'curvedCW', roundness: 0.2 } },
+                physics: { enabled: false },
+                interaction: { hover: true, tooltipDelay: 200, zoomView: true, dragView: true },
+                layout: { improvedLayout: true }
             };
-            
-            if (network) {
-                network.destroy();
-            }
-            
+            if (network) network.destroy();
             network = new vis.Network(container, data, options);
-            
-            // Add click events for nodes and edges
             network.on('click', function(params) {
                 if (params.nodes.length > 0) {
-                    const clickedNode = params.nodes[0];
-                    showDirectlyRelatedNodes(clickedNode);
+                    // Node clicked
                     hideSidePanel();
                 } else if (params.edges.length > 0) {
-                    const clickedEdge = params.edges[0];
-                    showEdgeDetails(clickedEdge);
+                    // Edge clicked
+                    showEdgeDetails(params.edges[0]);
                 } else {
-                    // Clicked on whitespace - show all nodes
-                    showAllNodes();
                     hideSidePanel();
                 }
             });
@@ -2334,35 +2418,37 @@ ${sqlStatement}
 
         function searchNetworkNode() {
             const input = document.getElementById('networkNodeSearchInput');
-            const query = input.value.trim();
+            const query = input.value.trim().toLowerCase();
             if (!query) {
-                showAllNodes();
+                if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
+                    const tables = lineageData.file_groups[selectedNetworkScript].tables;
+                    const tablePairs = tables.map(tableName => {
+                        const table = lineageData.tables[tableName];
+                        const scriptName = table.script_name || 'Unknown';
+                        return [scriptName, tableName];
+                    });
+                    createFilteredNetworkVisualization(tablePairs);
+                } else {
+                    showAllNodes();
+                }
                 return;
             }
-            
-            // Find exact match first, then partial match
-            let matchedNode = null;
-            
-            // Exact match (case-insensitive)
-            for (const tableName of allTableNames) {
-                if (tableName.toLowerCase() === query.toLowerCase()) {
-                    matchedNode = tableName;
-                    break;
-                }
+            // Find all nodes that match (case-insensitive, partial match)
+            let searchScope = allTableNames;
+            if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
+                searchScope = lineageData.file_groups[selectedNetworkScript].tables;
             }
-            
-            // Partial match if no exact match
-            if (!matchedNode) {
-                for (const tableName of allTableNames) {
-                    if (tableName.toLowerCase().includes(query.toLowerCase())) {
-                        matchedNode = tableName;
-                        break;
-                    }
-                }
-            }
-            
-            if (matchedNode) {
-                showDirectlyRelatedNodes(matchedNode);
+            const matchedNodes = searchScope.filter(tableName => tableName.toLowerCase().includes(query));
+            if (matchedNodes.length === 1) {
+                showDirectlyRelatedNodes(matchedNodes[0]);
+                hideAutocompleteDropdown();
+            } else if (matchedNodes.length > 1) {
+                const tablePairs = matchedNodes.map(tableName => {
+                    const table = lineageData.tables[tableName];
+                    const scriptName = table.script_name || 'Unknown';
+                    return [scriptName, tableName];
+                });
+                createFilteredNetworkVisualization(tablePairs);
                 hideAutocompleteDropdown();
             } else {
                 // Show empty network with a message
@@ -2377,8 +2463,17 @@ ${sqlStatement}
 
         function clearNetworkNodeSearch() {
             document.getElementById('networkNodeSearchInput').value = '';
-            hideAutocompleteDropdown();
-            showAllNodes();
+            if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
+                const tables = lineageData.file_groups[selectedNetworkScript].tables;
+                const tablePairs = tables.map(tableName => {
+                    const table = lineageData.tables[tableName];
+                    const scriptName = table.script_name || 'Unknown';
+                    return [scriptName, tableName];
+                });
+                createFilteredNetworkVisualization(tablePairs);
+            } else {
+                showAllNodes();
+            }
         }
 
         function showAutocompleteDropdown() {
@@ -2526,9 +2621,9 @@ ${sqlStatement}
                             .then(data => {
                                 console.log(`Processing file: ${jsonFile}`);
                                 
-                                // Create file group
-                                const fileName = jsonFile.replace('_lineage.json', '');
-                                mergedData.file_groups[fileName] = {
+                                // Create file group using script_name from the data
+                                const scriptName = data.script_name || jsonFile.replace('_lineage.json', '');
+                                mergedData.file_groups[scriptName] = {
                                     tables: [],
                                     statements: []
                                 };
@@ -2537,7 +2632,9 @@ ${sqlStatement}
                                 if (data.tables) {
                                     Object.keys(data.tables).forEach(tableName => {
                                         mergedData.tables[tableName] = data.tables[tableName];
-                                        mergedData.file_groups[fileName].tables.push(tableName);
+                                        // Add script_name to the table object
+                                        mergedData.tables[tableName].script_name = scriptName;
+                                        mergedData.file_groups[scriptName].tables.push(tableName);
                                     });
                                 }
                                 
@@ -2548,7 +2645,7 @@ ${sqlStatement}
                                     
                                     // Track statement indices for this file
                                     for (let i = 0; i < data.bteq_statements.length; i++) {
-                                        mergedData.file_groups[fileName].statements.push(startIndex + i);
+                                        mergedData.file_groups[scriptName].statements.push(startIndex + i);
                                     }
                                 }
                                 
@@ -2556,15 +2653,16 @@ ${sqlStatement}
                                 
                                 // When all files are processed, update the display
                                 if (processedFiles === totalFiles) {
-                                    console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
-                                    lineageData = mergedData;
-                                    displaySummary();
-                                    displayTables();
-                                    displayStatements();
-                                    displayNetworkFileGroups();
-                                    document.getElementById('summarySection').style.display = 'block';
-                                    document.getElementById('tabSection').style.display = 'block';
-                                    initializeTableNames();
+                                                                console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
+                            lineageData = mergedData;
+                            buildScriptAwareMappings();
+                            displaySummary();
+                            displayTables();
+                            displayStatements();
+                            displayNetworkFileGroups();
+                            document.getElementById('summarySection').style.display = 'block';
+                            document.getElementById('tabSection').style.display = 'block';
+                            initializeTableNames();
                                     
                                     // Update URL to include the folder path
                                     const url = new URL(window.location);
@@ -2585,6 +2683,21 @@ ${sqlStatement}
                 .catch(error => {
                     showError(`Error loading all_lineage.txt from ${folderPath}: ${error.message}`);
                 });
+        }
+
+        // Add a div above the networkContainer to display the selected script name
+        function updateSelectedScriptLabel() {
+            const labelDiv = document.getElementById('selectedScriptLabel');
+            if (!labelDiv) return;
+            if (selectedNetworkScript && lineageData.file_groups && lineageData.file_groups[selectedNetworkScript]) {
+
+                const scriptName = selectedNetworkScript;
+                labelDiv.textContent = `Script: ${scriptName}`;
+                labelDiv.style.display = '';
+            } else {
+                labelDiv.textContent = 'All Scripts';
+                labelDiv.style.display = '';
+            }
         }
     </script>
 </body>

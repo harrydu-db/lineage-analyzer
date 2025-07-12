@@ -985,26 +985,19 @@ class ETLLineageAnalyzer:
         else:
             print(json.dumps(data, indent=2))
 
-    def export_to_bteq_sql(self, lineage_info: LineageInfo, output_file: str) -> None:
+    def export_to_bteq_sql(self, lineage_info: LineageInfo, output_file: str, original_script_path: str = None) -> None:
         """Export cleaned BTEQ SQL (without control statements) to a .bteq file"""
         import sqlparse
-        # Get the original script content
-        script_path = Path(lineage_info.script_name)
-        if not script_path.exists():
-            # Try to find the script in the current directory or common locations
-            possible_paths = [
-                script_path,
-                Path(f"camstar_only/{lineage_info.script_name}"),
-                Path(f"old/Lotmaster_scripts/{lineage_info.script_name}"),
-            ]
+        
+        # Use the provided script path or fall back to the lineage_info script_name
+        if original_script_path:
+            script_path = Path(original_script_path)
+        else:
+            script_path = Path(lineage_info.script_name)
             
-            for path in possible_paths:
-                if path.exists():
-                    script_path = path
-                    break
-            else:
-                print(f"⚠️ Warning: Could not find original script file for {lineage_info.script_name}")
-                return
+        if not script_path.exists():
+            print(f"⚠️ Warning: Could not find original script file: {script_path}")
+            return
         
         # Read the original script
         with open(script_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1043,7 +1036,7 @@ class ETLLineageAnalyzer:
                 f.write(pretty_sql)
             print(f"💾 Cleaned BTEQ SQL exported to: {output_file}")
         else:
-            print(f"⚠️ Warning: No SQL blocks found in {lineage_info.script_name}")
+            print(f"⚠️ Warning: No SQL blocks found in {script_path}")
 
 
 
@@ -1089,7 +1082,7 @@ class ETLLineageAnalyzer:
 
                 # Generate BTEQ SQL file
                 bteq_file = output_path / f"{script_file.stem}.bteq"
-                self.export_to_bteq_sql(lineage_info, str(bteq_file))
+                self.export_to_bteq_sql(lineage_info, str(bteq_file), str(script_file))
 
                 successful_files.append(script_file.name)
                 print(f"✅ Successfully processed {script_file.name}")
@@ -1217,7 +1210,7 @@ Examples:
                 
                 # Generate BTEQ SQL file
                 bteq_file = output_path / f"{script_name}.bteq"
-                analyzer.export_to_bteq_sql(lineage_info, str(bteq_file))
+                analyzer.export_to_bteq_sql(lineage_info, str(bteq_file), str(input_path))
                 
                 print(f"✅ Analysis complete! Files saved to {args.output_folder}/")
                 print(f"   • {json_file.name} - Lineage data")
