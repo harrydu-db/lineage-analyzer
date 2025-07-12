@@ -228,24 +228,51 @@ class ETLLineageAnalyzer:
 
     def _clean_bteq_sql(self, sql_block: str) -> str:
         """Remove BTEQ control statements and keep only pure SQL"""
-        # Remove BTEQ control statements
+        # Remove BTEQ control statements (dot commands)
+        # Dot commands always start with a period at the beginning of the line
+        # Common dot commands: .LOGON, .LOGOFF, .SET, .IF, .GOTO, .LABEL, .QUIT, .EXPORT, .IMPORT, .RUN, .REPEAT, .SHOW
+        # Semicolons are optional for most commands
         bteq_control_patterns = [
-            r"\.IF\s+.*?THEN\s+GOTO\s+\w+",  # .IF ... THEN GOTO ...
-            r"\.SET\s+.*?;",  # .SET ... ;
-            r"\.LABEL\s+\w+;",  # .LABEL ... ;
-            r"\.EXPORT\s+.*?;",  # .EXPORT ... ;
-            r"\.LOGOFF;",  # .LOGOFF;
-            r"\.QUIT;?",  # .QUIT or .QUIT;
-            r"\.BT;",  # .BT;
-            r"\.ET;",  # .ET;
-            r"\.GOTO\s+\w+;",  # .GOTO ... ;
-            r"\.SEVERITY\s+\d+;",  # .SEVERITY ... ;
-            r"\.ERRORLEVEL\s+.*?;",  # .ERRORLEVEL ... ;
-            r"\.ECHOREQ\s+.*?;",  # .ECHOREQ ... ;
-            r"\.ERROROUT\s+.*?;",  # .ERROROUT ... ;
-            r"\.TITLEDASHES\s+.*?;",  # .TITLEDASHES ... ;
-            r"\.WIDTH\s+.*?;",  # .WIDTH ... ;
-            r"\.RETRY\s+.*?;",  # .RETRY ... ;
+            # .LOGON (semicolon optional)
+            r"^\s*\.LOGON\s+.*?(?:;|$)",
+            # .LOGOFF (semicolon optional)
+            r"^\s*\.LOGOFF(?:;|$)",
+            # .SET commands (semicolon optional)
+            r"^\s*\.SET\s+.*?(?:;|$)",
+            # .IF ... THEN GOTO (semicolon optional)
+            r"^\s*\.IF\s+.*?THEN\s+GOTO\s+\w+(?:;|$)",
+            # .LABEL (semicolon optional)
+            r"^\s*\.LABEL\s+\w+(?:;|$)",
+            # .EXPORT (semicolon optional)
+            r"^\s*\.EXPORT\s+.*?(?:;|$)",
+            # .IMPORT (semicolon optional)
+            r"^\s*\.IMPORT\s+.*?(?:;|$)",
+            # .QUIT (semicolon optional)
+            r"^\s*\.QUIT(?:;|$)",
+            # .BT/.ET (semicolon optional)
+            r"^\s*\.(?:BT|ET)(?:;|$)",
+            # .GOTO (semicolon optional)
+            r"^\s*\.GOTO\s+\w+(?:;|$)",
+            # .SEVERITY (semicolon optional)
+            r"^\s*\.SEVERITY\s+\d+(?:;|$)",
+            # .ERRORLEVEL (semicolon optional)
+            r"^\s*\.ERRORLEVEL\s+.*?(?:;|$)",
+            # .ECHOREQ (semicolon optional)
+            r"^\s*\.ECHOREQ\s+.*?(?:;|$)",
+            # .ERROROUT (semicolon optional)
+            r"^\s*\.ERROROUT\s+.*?(?:;|$)",
+            # .TITLEDASHES (semicolon optional)
+            r"^\s*\.TITLEDASHES\s+.*?(?:;|$)",
+            # .WIDTH (semicolon optional)
+            r"^\s*\.WIDTH\s+.*?(?:;|$)",
+            # .RETRY (semicolon optional)
+            r"^\s*\.RETRY\s+.*?(?:;|$)",
+            # .RUN FILE = filename (semicolon optional)
+            r"^\s*\.RUN\s+FILE\s*=.*?(?:;|$)",
+            # .REPEAT (semicolon optional)
+            r"^\s*\.REPEAT\s+.*?(?:;|$)",
+            # .SHOW (semicolon optional)
+            r"^\s*\.SHOW\s+.*?(?:;|$)",
         ]
         
         cleaned_sql = sql_block
@@ -262,6 +289,8 @@ class ETLLineageAnalyzer:
         cleaned_sql = re.sub(r"^\s+", "", cleaned_sql, flags=re.MULTILINE)  # Remove leading whitespace
         cleaned_sql = re.sub(r"\s+$", "", cleaned_sql, flags=re.MULTILINE)  # Remove trailing whitespace
         
+
+        
         return cleaned_sql.strip()
 
     def _clean_bteq_sql_preserve_create(self, sql_block: str) -> str:
@@ -274,23 +303,50 @@ class ETLLineageAnalyzer:
         create_statements = re.findall(create_volatile_pattern, sql_block, re.IGNORECASE | re.DOTALL)
         
         # Remove BTEQ control statements but keep CREATE VOLATILE TABLE
+        # Dot commands always start with a period at the beginning of the line
+        # Common dot commands: .LOGON, .LOGOFF, .SET, .IF, .GOTO, .LABEL, .QUIT, .EXPORT, .IMPORT, .RUN, .REPEAT, .SHOW
+        # Semicolons are optional for most commands
         bteq_control_patterns = [
-            r"\.IF\s+.*?THEN\s+GOTO\s+\w+",  # .IF ... THEN GOTO ...
-            r"\.SET\s+.*?;",  # .SET ... ;
-            r"\.LABEL\s+\w+;",  # .LABEL ... ;
-            r"\.EXPORT\s+.*?;",  # .EXPORT ... ;
-            r"\.LOGOFF;",  # .LOGOFF;
-            r"\.QUIT;",  # .QUIT;
-            r"\.BT;",  # .BT;
-            r"\.ET;",  # .ET;
-            r"\.GOTO\s+\w+;",  # .GOTO ... ;
-            r"\.SEVERITY\s+\d+;",  # .SEVERITY ... ;
-            r"\.ERRORLEVEL\s+.*?;",  # .ERRORLEVEL ... ;
-            r"\.ECHOREQ\s+.*?;",  # .ECHOREQ ... ;
-            r"\.ERROROUT\s+.*?;",  # .ERROROUT ... ;
-            r"\.TITLEDASHES\s+.*?;",  # .TITLEDASHES ... ;
-            r"\.WIDTH\s+.*?;",  # .WIDTH ... ;
-            r"\.RETRY\s+.*?;",  # .RETRY ... ;
+            # .LOGON (semicolon optional)
+            r"^\s*\.LOGON\s+.*?(?:;|$)",
+            # .LOGOFF (semicolon optional)
+            r"^\s*\.LOGOFF(?:;|$)",
+            # .SET commands (semicolon optional)
+            r"^\s*\.SET\s+.*?(?:;|$)",
+            # .IF ... THEN GOTO (semicolon optional)
+            r"^\s*\.IF\s+.*?THEN\s+GOTO\s+\w+(?:;|$)",
+            # .LABEL (semicolon optional)
+            r"^\s*\.LABEL\s+\w+(?:;|$)",
+            # .EXPORT (semicolon optional)
+            r"^\s*\.EXPORT\s+.*?(?:;|$)",
+            # .IMPORT (semicolon optional)
+            r"^\s*\.IMPORT\s+.*?(?:;|$)",
+            # .QUIT (semicolon optional)
+            r"^\s*\.QUIT(?:;|$)",
+            # .BT/.ET (semicolon optional)
+            r"^\s*\.(?:BT|ET)(?:;|$)",
+            # .GOTO (semicolon optional)
+            r"^\s*\.GOTO\s+\w+(?:;|$)",
+            # .SEVERITY (semicolon optional)
+            r"^\s*\.SEVERITY\s+\d+(?:;|$)",
+            # .ERRORLEVEL (semicolon optional)
+            r"^\s*\.ERRORLEVEL\s+.*?(?:;|$)",
+            # .ECHOREQ (semicolon optional)
+            r"^\s*\.ECHOREQ\s+.*?(?:;|$)",
+            # .ERROROUT (semicolon optional)
+            r"^\s*\.ERROROUT\s+.*?(?:;|$)",
+            # .TITLEDASHES (semicolon optional)
+            r"^\s*\.TITLEDASHES\s+.*?(?:;|$)",
+            # .WIDTH (semicolon optional)
+            r"^\s*\.WIDTH\s+.*?(?:;|$)",
+            # .RETRY (semicolon optional)
+            r"^\s*\.RETRY\s+.*?(?:;|$)",
+            # .RUN FILE = filename (semicolon optional)
+            r"^\s*\.RUN\s+FILE\s*=.*?(?:;|$)",
+            # .REPEAT (semicolon optional)
+            r"^\s*\.REPEAT\s+.*?(?:;|$)",
+            # .SHOW (semicolon optional)
+            r"^\s*\.SHOW\s+.*?(?:;|$)",
         ]
         
         cleaned_sql = sql_block
@@ -319,14 +375,41 @@ class ETLLineageAnalyzer:
             
             for line in lines:
                 stripped = line.strip()
-                # Skip BTEQ control statements
-                if stripped.startswith('.') and not in_create_statement:
-                    continue
-                if stripped.upper() in ['BT', 'BT;', 'ET', 'ET;'] and not in_create_statement:
-                    continue
-                # Always skip .QUIT lines
-                if stripped.upper().startswith('.QUIT'):
-                    continue
+                # Skip dot commands (BTEQ control statements) that start with a period
+                if stripped.startswith('.'):
+                    # Check for specific dot commands that should be removed
+                    dot_command_patterns = [
+                        r'^\.LOGON\s+.*?;?$',  # .LOGON (semicolon optional)
+                        r'^\.LOGOFF;?$',  # .LOGOFF (semicolon optional)
+                        r'^\.SET\s+.*?;?$',  # .SET commands (semicolon optional)
+                        r'^\.IF\s+.*?THEN\s+GOTO\s+\w+;?$',  # .IF ... THEN GOTO (semicolon optional)
+                        r'^\.LABEL\s+\w+;?$',  # .LABEL (semicolon optional)
+                        r'^\.EXPORT\s+.*?;?$',  # .EXPORT (semicolon optional)
+                        r'^\.IMPORT\s+.*?;?$',  # .IMPORT (semicolon optional)
+                        r'^\.QUIT;?$',  # .QUIT (semicolon optional)
+                        r'^\.(?:BT|ET);?$',  # .BT/.ET (semicolon optional)
+                        r'^\.GOTO\s+\w+;?$',  # .GOTO (semicolon optional)
+                        r'^\.SEVERITY\s+\d+;?$',  # .SEVERITY (semicolon optional)
+                        r'^\.ERRORLEVEL\s+.*?;?$',  # .ERRORLEVEL (semicolon optional)
+                        r'^\.ECHOREQ\s+.*?;?$',  # .ECHOREQ (semicolon optional)
+                        r'^\.ERROROUT\s+.*?;?$',  # .ERROROUT (semicolon optional)
+                        r'^\.TITLEDASHES\s+.*?;?$',  # .TITLEDASHES (semicolon optional)
+                        r'^\.WIDTH\s+.*?;?$',  # .WIDTH (semicolon optional)
+                        r'^\.RETRY\s+.*?;?$',  # .RETRY (semicolon optional)
+                        r'^\.RUN\s+FILE\s*=.*?;?$',  # .RUN FILE = filename (semicolon optional)
+                        r'^\.REPEAT\s+.*?;?$',  # .REPEAT (semicolon optional)
+                        r'^\.SHOW\s+.*?;?$',  # .SHOW (semicolon optional)
+                    ]
+                    
+                    should_skip = False
+                    for pattern in dot_command_patterns:
+                        if re.match(pattern, stripped, re.IGNORECASE):
+                            should_skip = True
+                            break
+                    
+                    if should_skip:
+                        continue
+                
                 # Check if we're entering a CREATE VOLATILE TABLE statement
                 if 'CREATE' in stripped.upper() and 'VOLATILE' in stripped.upper() and 'TABLE' in stripped.upper():
                     in_create_statement = True
@@ -1008,16 +1091,47 @@ class ETLLineageAnalyzer:
         if sql_blocks:
             # Combine all cleaned SQL blocks
             cleaned_sql = "\n\n".join(sql_blocks)
-            # Remove all lines starting with '.' and all BT/BT; and ET/ET; statements
+            # Remove all dot commands (BTEQ control statements) that start with a period
             cleaned_lines = []
             for line in cleaned_sql.splitlines():
-                stripped = line.lstrip()
+                stripped = line.strip()
+                # Skip dot commands (BTEQ control statements) that start with a period
                 if stripped.startswith('.'):
-                    continue
-                if stripped.upper() == 'BT' or stripped.upper() == 'BT;':
-                    continue
-                if stripped.upper() == 'ET' or stripped.upper() == 'ET;':
-                    continue
+                    # Check for specific dot commands that should be removed
+                    dot_command_patterns = [
+                        r'^\.LOGON\s+.*?;?$',  # .LOGON (semicolon optional)
+                        r'^\.LOGOFF;?$',  # .LOGOFF (semicolon optional)
+                        r'^\.SET\s+.*?;?$',  # .SET commands (semicolon optional)
+                        r'^\.IF\s+.*?THEN\s+GOTO\s+\w+;?$',  # .IF ... THEN GOTO (semicolon optional)
+                        r'^\.LABEL\s+\w+;?$',  # .LABEL (semicolon optional)
+                        r'^\.EXPORT\s+.*?;?$',  # .EXPORT (semicolon optional)
+                        r'^\.IMPORT\s+.*?;?$',  # .IMPORT (semicolon optional)
+                        r'^\.QUIT;?$',  # .QUIT (semicolon optional)
+                        r'^\.(?:BT|ET);?$',  # .BT/.ET (semicolon optional)
+                        r'^\.GOTO\s+\w+;?$',  # .GOTO (semicolon optional)
+                        r'^\.SEVERITY\s+\d+;?$',  # .SEVERITY (semicolon optional)
+                        r'^\.ERRORLEVEL\s+.*?;?$',  # .ERRORLEVEL (semicolon optional)
+                        r'^\.ECHOREQ\s+.*?;?$',  # .ECHOREQ (semicolon optional)
+                        r'^\.ERROROUT\s+.*?;?$',  # .ERROROUT (semicolon optional)
+                        r'^\.TITLEDASHES\s+.*?;?$',  # .TITLEDASHES (semicolon optional)
+                        r'^\.WIDTH\s+.*?;?$',  # .WIDTH (semicolon optional)
+                        r'^\.RETRY\s+.*?;?$',  # .RETRY (semicolon optional)
+                        r'^\.RUN\s+FILE\s*=.*?;?$',  # .RUN FILE = filename (semicolon optional)
+                        r'^\.REPEAT\s+.*?;?$',  # .REPEAT (semicolon optional)
+                        r'^\.SHOW\s+.*?;?$',  # .SHOW (semicolon optional)
+                    ]
+                    
+                    should_skip = False
+                    for pattern in dot_command_patterns:
+                        if re.match(pattern, stripped, re.IGNORECASE):
+                            should_skip = True
+                            break
+                    
+                    if should_skip:
+                        continue
+                
+
+                
                 cleaned_lines.append(line)
             final_sql = '\n'.join(cleaned_lines)
             # Format each SQL statement using sqlparse
