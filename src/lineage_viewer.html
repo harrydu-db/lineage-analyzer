@@ -719,18 +719,7 @@
                             <button onclick="searchNetworkNode()" style="padding: 8px 16px; border-radius: 4px; border: none; background: #007bff; color: white; font-weight: bold; cursor: pointer;">Search</button>
                             <button onclick="clearNetworkNodeSearch()" style="padding: 8px 16px; border-radius: 4px; border: none; background: #6c757d; color: white; font-weight: bold; cursor: pointer;">Clear</button>
                         </div>
-                        <div id="sourceTablePicker" style="margin-bottom: 16px; display: flex; gap: 8px; align-items: center;">
-                            <label for="sourceTableSelect" style="font-weight: bold; color: #495057; min-width: 120px;">Source Tables:</label>
-                            <select id="sourceTableSelect" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px; background: white;" onchange="selectSourceTable()">
-                                <option value="">All tables</option>
-                            </select>
-                        </div>
-                        <div id="lastTablePicker" style="margin-bottom: 16px; display: flex; gap: 8px; align-items: center;">
-                            <label for="lastTableSelect" style="font-weight: bold; color: #495057; min-width: 120px;">Last Tables:</label>
-                            <select id="lastTableSelect" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px; background: white;" onchange="selectLastTable()">
-                                <option value="">All tables</option>
-                            </select>
-                        </div>
+
                         <div id="selectedScriptLabel" style="font-size:1.2em; font-weight:bold; color:#1976d2; margin-bottom:8px; display:none;"></div>
                         <div id="networkContainer" style="height: 600px; border: 1px solid #dee2e6; border-radius: 8px;"></div>
                         <div id="networkSidePanel" style="width: 400px; background: #f8f9fa; border-left: 1px solid #dee2e6; padding: 20px; overflow-y: auto; display: none; position: absolute; top: 0; right: 0; height: 100%;">
@@ -911,7 +900,6 @@
                     document.getElementById('summarySection').style.display = 'block';
                     document.getElementById('tabSection').style.display = 'block';
                     initializeTableNames();
-                    populateSourceTablePicker();
                 } catch (error) {
                     showError('Error parsing JSON file: ' + error.message);
                 }
@@ -1008,7 +996,6 @@
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
-                            populateSourceTablePicker();
                             
                             // Hide the folder info
                             folderInfo.style.display = 'none';
@@ -1993,7 +1980,6 @@ ${statement}
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
-                            populateSourceTablePicker();
                                 }
                             })
                             .catch(error => {
@@ -2654,100 +2640,10 @@ ${sqlStatement}
         function initializeTableNames() {
             if (lineageData && lineageData.tables) {
                 allTableNames = Object.keys(lineageData.tables).sort();
-                populateSourceTablePicker();
-                populateLastTablePicker();
             }
         }
 
-        function populateSourceTablePicker() {
-            const sourceTableSelect = document.getElementById('sourceTableSelect');
-            if (!sourceTableSelect || !lineageData || !lineageData.tables) return;
-            
-            // Clear existing options and add 'All' option
-            sourceTableSelect.innerHTML = '<option value="">All tables</option>';
-            
-            // Find tables with no in-edges (source.length === 0)
-            const sourceTables = Object.keys(lineageData.tables).filter(tableName => {
-                const table = lineageData.tables[tableName];
-                return table.source.length === 0;
-            }).sort();
-            
-            // Add options for source tables
-            sourceTables.forEach(tableName => {
-                const table = lineageData.tables[tableName];
-                const option = document.createElement('option');
-                option.value = tableName;
-                option.textContent = `${tableName} (${table.target.length} targets${table.is_volatile ? ', volatile' : ''})`;
-                sourceTableSelect.appendChild(option);
-            });
-            
-            // Add event listener as backup
-            sourceTableSelect.addEventListener('change', selectSourceTable);
-        }
 
-        function selectSourceTable() {
-            console.log('selectSourceTable called');
-            const sourceTableSelect = document.getElementById('sourceTableSelect');
-            const selectedTable = sourceTableSelect.value;
-            console.log('Selected table:', selectedTable);
-            
-            if (!selectedTable) {
-                // Show all source tables (tables with no in-edges)
-                const sourceTables = Object.keys(lineageData.tables).filter(tableName => {
-                    const table = lineageData.tables[tableName];
-                    return table.source.length === 0;
-                });
-                console.log('Source tables found:', sourceTables);
-                showMultipleTables(sourceTables);
-            } else {
-                showDirectlyRelatedNodes(selectedTable);
-            }
-        }
-
-        function populateLastTablePicker() {
-            const lastTableSelect = document.getElementById('lastTableSelect');
-            if (!lastTableSelect || !lineageData || !lineageData.tables) return;
-            
-            // Clear existing options and add 'All' option
-            lastTableSelect.innerHTML = '<option value="">All tables</option>';
-            
-            // Find tables with no out-edges (target.length === 0)
-            const lastTables = Object.keys(lineageData.tables).filter(tableName => {
-                const table = lineageData.tables[tableName];
-                return table.target.length === 0;
-            }).sort();
-            
-            // Add options for last tables
-            lastTables.forEach(tableName => {
-                const table = lineageData.tables[tableName];
-                const option = document.createElement('option');
-                option.value = tableName;
-                option.textContent = `${tableName} (${table.source.length} sources${table.is_volatile ? ', volatile' : ''})`;
-                lastTableSelect.appendChild(option);
-            });
-            
-            // Add event listener as backup
-            lastTableSelect.addEventListener('change', selectLastTable);
-        }
-
-        function selectLastTable() {
-            console.log('selectLastTable called');
-            const lastTableSelect = document.getElementById('lastTableSelect');
-            const selectedTable = lastTableSelect.value;
-            console.log('Selected table:', selectedTable);
-            
-            if (!selectedTable) {
-                // Show all last tables (tables with no out-edges)
-                const lastTables = Object.keys(lineageData.tables).filter(tableName => {
-                    const table = lineageData.tables[tableName];
-                    return table.target.length === 0;
-                });
-                console.log('Last tables found:', lastTables);
-                showMultipleTables(lastTables);
-            } else {
-                showDirectlyRelatedNodes(selectedTable);
-            }
-        }
 
         function searchNetworkNode() {
             const input = document.getElementById('networkNodeSearchInput');
@@ -2996,7 +2892,6 @@ ${sqlStatement}
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
-                            populateSourceTablePicker();
                                     
                                     // Update URL to include the folder path
                                     const url = new URL(window.location);
