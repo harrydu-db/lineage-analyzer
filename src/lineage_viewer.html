@@ -2170,19 +2170,8 @@ ${sqlStatement}
         }
 
         function showTableNetwork(tableName) {
-            const table = lineageData.tables[tableName];
-            const scriptName = table.script_name || 'Unknown';
-            const tablePair = [scriptName, tableName];
-            
-            // Only show the table if it belongs to the selected script, if any
-            if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
-                const tables = lineageData.file_groups[selectedNetworkScript].tables;
-                if (tables.includes(tableName)) {
-                    createFilteredNetworkVisualization([tablePair]);
-                }
-            } else {
-                createFilteredNetworkVisualization([tablePair]);
-            }
+            // Show the selected table along with its directly related tables (sources and targets)
+            showDirectlyRelatedNodes(tableName);
         }
 
         function showFileNetwork(fileName) {
