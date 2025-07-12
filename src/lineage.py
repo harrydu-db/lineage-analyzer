@@ -51,6 +51,7 @@ class LineageInfo:
     target_tables: Set[str]
     operations: List[TableOperation]
     table_relationships: Dict[str, List[str]]
+    warnings: List[str]
 
 
 class ETLLineageAnalyzer:
@@ -192,12 +193,15 @@ class ETLLineageAnalyzer:
         # Check if this looks like a shell script with bteq blocks
         if "bteq" in content.lower() or "<<EOF" in content:
             # Pattern to match bteq heredoc blocks
-            bteq_pattern = r"bteq\s*<<EOF\s*(.*?)\s*EOF"
-            matches = re.finditer(bteq_pattern, content, re.DOTALL | re.IGNORECASE)
+            # Extract BTEQ SQL blocks - match the exact EOF delimiter (not part of identifiers)
+            bteq_pattern = r"bteq\s*<<EOF\s*(.*?)\s*^EOF\s*$"
+            matches = re.finditer(bteq_pattern, content, re.DOTALL | re.IGNORECASE | re.MULTILINE)
 
             for match in matches:
                 sql_block = match.group(1)
-                # For lineage analysis, use the original SQL block without cleaning
+                # Remove BTEQ comments (/* ... */) from the SQL block
+                sql_block = re.sub(r"/\*.*?\*/", "", sql_block, flags=re.DOTALL)
+                # For lineage analysis, use the cleaned SQL block
                 # This ensures CREATE VOLATILE TABLE statements are preserved
                 if sql_block.strip():
                     sql_blocks.append(sql_block)
@@ -364,68 +368,70 @@ class ETLLineageAnalyzer:
 
     def _clean_bteq_sql_for_json(self, sql_block: str) -> str:
         """Remove BTEQ control statements but preserve CREATE VOLATILE TABLE statements for JSON export"""
-        # First, check if this is a CREATE VOLATILE TABLE statement
-        create_volatile_pattern = r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+\w+\s+AS\s*\(.*?\)WITH\s+DATA.*?ON\s+COMMIT\s+PRESERVE\s+ROWS;"
-        if re.search(create_volatile_pattern, sql_block, re.IGNORECASE | re.DOTALL):
-            # For CREATE VOLATILE TABLE, only remove the BTEQ control statements at the beginning
-            # but preserve the CREATE statement itself
-            lines = sql_block.split('\n')
-            cleaned_lines = []
-            in_create_statement = False
-            
-            for line in lines:
-                stripped = line.strip()
-                # Skip dot commands (BTEQ control statements) that start with a period
-                if stripped.startswith('.'):
-                    # Check for specific dot commands that should be removed
-                    dot_command_patterns = [
-                        r'^\.LOGON\s+.*?;?$',  # .LOGON (semicolon optional)
-                        r'^\.LOGOFF;?$',  # .LOGOFF (semicolon optional)
-                        r'^\.SET\s+.*?;?$',  # .SET commands (semicolon optional)
-                        r'^\.IF\s+.*?THEN\s+GOTO\s+\w+;?$',  # .IF ... THEN GOTO (semicolon optional)
-                        r'^\.LABEL\s+\w+;?$',  # .LABEL (semicolon optional)
-                        r'^\.EXPORT\s+.*?;?$',  # .EXPORT (semicolon optional)
-                        r'^\.IMPORT\s+.*?;?$',  # .IMPORT (semicolon optional)
-                        r'^\.QUIT;?$',  # .QUIT (semicolon optional)
-                        r'^\.(?:BT|ET);?$',  # .BT/.ET (semicolon optional)
-                        r'^\.GOTO\s+\w+;?$',  # .GOTO (semicolon optional)
-                        r'^\.SEVERITY\s+\d+;?$',  # .SEVERITY (semicolon optional)
-                        r'^\.ERRORLEVEL\s+.*?;?$',  # .ERRORLEVEL (semicolon optional)
-                        r'^\.ECHOREQ\s+.*?;?$',  # .ECHOREQ (semicolon optional)
-                        r'^\.ERROROUT\s+.*?;?$',  # .ERROROUT (semicolon optional)
-                        r'^\.TITLEDASHES\s+.*?;?$',  # .TITLEDASHES (semicolon optional)
-                        r'^\.WIDTH\s+.*?;?$',  # .WIDTH (semicolon optional)
-                        r'^\.RETRY\s+.*?;?$',  # .RETRY (semicolon optional)
-                        r'^\.RUN\s+FILE\s*=.*?;?$',  # .RUN FILE = filename (semicolon optional)
-                        r'^\.REPEAT\s+.*?;?$',  # .REPEAT (semicolon optional)
-                        r'^\.SHOW\s+.*?;?$',  # .SHOW (semicolon optional)
-                    ]
-                    
-                    should_skip = False
-                    for pattern in dot_command_patterns:
-                        if re.match(pattern, stripped, re.IGNORECASE):
-                            should_skip = True
-                            break
-                    
-                    if should_skip:
-                        continue
+        # Remove BTEQ comments first
+        cleaned_sql = re.sub(r"/\*.*?\*/", "", sql_block, flags=re.DOTALL)
+        
+        # Split into lines and remove BTEQ control statements
+        lines = cleaned_sql.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            stripped = line.strip()
+            # Skip dot commands (BTEQ control statements) that start with a period
+            if stripped.startswith('.'):
+                # Check for specific dot commands that should be removed
+                dot_command_patterns = [
+                    r'^\.LOGON\s+.*?;?$',  # .LOGON (semicolon optional)
+                    r'^\.LOGOFF;?$',  # .LOGOFF (semicolon optional)
+                    r'^\.SET\s+.*?;?$',  # .SET commands (semicolon optional)
+                    r'^\.IF\s+.*?THEN\s+GOTO\s+\w+;?$',  # .IF ... THEN GOTO (semicolon optional)
+                    r'^\.LABEL\s+\w+;?$',  # .LABEL (semicolon optional)
+                    r'^\.EXPORT\s+.*?;?$',  # .EXPORT (semicolon optional)
+                    r'^\.IMPORT\s+.*?;?$',  # .IMPORT (semicolon optional)
+                    r'^\.QUIT;?$',  # .QUIT (semicolon optional)
+                    r'^\.(?:BT|ET);?$',  # .BT/.ET (semicolon optional)
+                    r'^\.GOTO\s+\w+;?$',  # .GOTO (semicolon optional)
+                    r'^\.SEVERITY\s+\d+;?$',  # .SEVERITY (semicolon optional)
+                    r'^\.ERRORLEVEL\s+.*?;?$',  # .ERRORLEVEL (semicolon optional)
+                    r'^\.ECHOREQ\s+.*?;?$',  # .ECHOREQ (semicolon optional)
+                    r'^\.ERROROUT\s+.*?;?$',  # .ERROROUT (semicolon optional)
+                    r'^\.TITLEDASHES\s+.*?;?$',  # .TITLEDASHES (semicolon optional)
+                    r'^\.WIDTH\s+.*?;?$',  # .WIDTH (semicolon optional)
+                    r'^\.RETRY\s+.*?;?$',  # .RETRY (semicolon optional)
+                    r'^\.RUN\s+FILE\s*=.*?;?$',  # .RUN FILE = filename (semicolon optional)
+                    r'^\.REPEAT\s+.*?;?$',  # .REPEAT (semicolon optional)
+                    r'^\.SHOW\s+.*?;?$',  # .SHOW (semicolon optional)
+                ]
                 
-                # Check if we're entering a CREATE VOLATILE TABLE statement
-                if 'CREATE' in stripped.upper() and 'VOLATILE' in stripped.upper() and 'TABLE' in stripped.upper():
-                    in_create_statement = True
-                cleaned_lines.append(line)
-            return '\n'.join(cleaned_lines).strip()
-        else:
-            # For other statements, use the regular cleaning method
-            return self._clean_bteq_sql(sql_block)
+                should_skip = False
+                for pattern in dot_command_patterns:
+                    if re.match(pattern, stripped, re.IGNORECASE):
+                        should_skip = True
+                        break
+                
+                if should_skip:
+                    continue
+            
+            cleaned_lines.append(line)
+        
+        # Join the cleaned lines and normalize whitespace
+        cleaned_sql = '\n'.join(cleaned_lines)
+        cleaned_sql = re.sub(r'\n\s*\n', '\n', cleaned_sql)  # Remove empty lines
+        cleaned_sql = re.sub(r'^\s+', '', cleaned_sql, flags=re.MULTILINE)  # Remove leading whitespace
+        cleaned_sql = re.sub(r'\s+$', '', cleaned_sql, flags=re.MULTILINE)  # Remove trailing whitespace
+        
+        return cleaned_sql.strip()
 
-    def extract_table_names(self, sql_block: str) -> Set[str]:
+    def extract_table_names(self, sql_block: str, warnings: List[str] = None) -> Set[str]:
         """Extract table names from SQL block using multiple approaches"""
+        if warnings is None:
+            warnings = []
         tables = set()
 
         # Remove comments and normalize whitespace
         sql_clean = re.sub(r"--.*$", "", sql_block, flags=re.MULTILINE)
-        sql_clean = re.sub(r"/\*.*?\*/", "", sql_clean, flags=re.DOTALL)
+        # Handle both /* and / * (BTEQ comments with space)
+        sql_clean = re.sub(r"/\s*\*.*?\*/", "", sql_clean, flags=re.DOTALL)
         sql_clean = re.sub(r"\s+", " ", sql_clean)  # Normalize whitespace
 
         # Method 1: Use sqlparse for structured parsing
@@ -436,7 +442,9 @@ class ETLLineageAnalyzer:
                     if self.is_valid_table_name(table):
                         tables.add(table)
         except Exception as e:
-            print(f"Warning: sqlparse failed, using regex fallback: {e}")
+            warning_msg = f"sqlparse failed, using regex fallback: {e}"
+            warnings.append(warning_msg)
+            print(f"Warning: {warning_msg}")
 
         # Method 2: Enhanced regex patterns for FROM/JOIN clauses
         # Handle multiline statements with re.DOTALL
@@ -507,14 +515,16 @@ class ETLLineageAnalyzer:
 
         return tables
 
-    def extract_operations(self, sql_block: str) -> List[TableOperation]:
+    def extract_operations(self, sql_block: str, warnings: List[str] = None) -> List[TableOperation]:
         """Extract table operations from SQL block with accurate line numbers."""
+        if warnings is None:
+            warnings = []
         operations = []
         # Split into individual statements and track their offsets
         statements_with_offsets = self._split_sql_statements_with_offsets(sql_block)
         for statement, offset in statements_with_offsets:
             line_number = self._offset_to_line_number(sql_block, offset)
-            operation = self._parse_sql_statement(statement, line_number)
+            operation = self._parse_sql_statement(statement, line_number, warnings)
             if operation:
                 operations.append(operation)
         return operations
@@ -524,7 +534,8 @@ class ETLLineageAnalyzer:
     ) -> List[Tuple[str, int]]:
         """Split SQL block into statements and return (statement, char_offset) tuples."""
         sql_clean = re.sub(r"--.*$", "", sql_block, flags=re.MULTILINE)
-        sql_clean = re.sub(r"/\*.*?\*/", "", sql_clean, flags=re.DOTALL)
+        # Handle both /* and / * (BTEQ comments with space)
+        sql_clean = re.sub(r"/\s*\*.*?\*/", "", sql_clean, flags=re.DOTALL)
         statements = []
         current_statement = ""
         paren_count = 0
@@ -561,9 +572,11 @@ class ETLLineageAnalyzer:
         return 1  # Default to line 1 if not found
 
     def _parse_sql_statement(
-        self, statement: str, line_number: int
+        self, statement: str, line_number: int, warnings: List[str] = None
     ) -> Optional[TableOperation]:
         """Parse a single SQL statement and extract operation info"""
+        if warnings is None:
+            warnings = []
         statement = statement.strip()
 
         # CREATE VOLATILE TABLE
@@ -574,7 +587,7 @@ class ETLLineageAnalyzer:
         )
         if create_match:
             table_name = create_match.group(1)
-            source_tables = self._extract_source_tables_from_select(statement)
+            source_tables = self._extract_source_tables_from_select(statement, warnings)
             return TableOperation(
                 operation_type="CREATE_VOLATILE",
                 target_table=table_name,
@@ -589,7 +602,7 @@ class ETLLineageAnalyzer:
         insert_match = re.search(r"INSERT\s+INTO\s+([\w\.]+)", statement, re.IGNORECASE)
         if insert_match:
             table_name = insert_match.group(1)
-            source_tables = self._extract_source_tables_from_select(statement)
+            source_tables = self._extract_source_tables_from_select(statement, warnings)
             return TableOperation(
                 operation_type="INSERT",
                 target_table=table_name,
@@ -607,7 +620,7 @@ class ETLLineageAnalyzer:
         )
         if update_match:
             target_table = update_match.group(1)
-            source_tables = self._extract_source_tables_from_update(statement)
+            source_tables = self._extract_source_tables_from_update(statement, warnings)
             return TableOperation(
                 operation_type="UPDATE",
                 target_table=target_table,
@@ -624,7 +637,7 @@ class ETLLineageAnalyzer:
         )
         if standard_update_match:
             target_table = standard_update_match.group(1)
-            source_tables = self._extract_source_tables_from_update(statement)
+            source_tables = self._extract_source_tables_from_update(statement, warnings)
             return TableOperation(
                 operation_type="UPDATE",
                 target_table=target_table,
@@ -637,12 +650,15 @@ class ETLLineageAnalyzer:
 
         return None
 
-    def _extract_all_source_tables(self, sql: str) -> List[str]:
+    def _extract_all_source_tables(self, sql: str, warnings: List[str] = None) -> List[str]:
         """Extract all source tables using sqlparse and fallback regex from FROM/JOIN clauses and subqueries."""
+        if warnings is None:
+            warnings = []
         tables = set()
         # Remove comments
         sql = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
-        sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+        # Handle both /* and / * (BTEQ comments with space)
+        sql = re.sub(r"/\s*\*.*?\*/", "", sql, flags=re.DOTALL)
 
         # Use sqlparse
         try:
@@ -652,7 +668,9 @@ class ETLLineageAnalyzer:
                     if self.is_valid_table_name(table):
                         tables.add(table)
         except Exception as e:
-            print(f"Warning: sqlparse failed in source extraction: {e}")
+            warning_msg = f"sqlparse failed in source extraction: {e}"
+            warnings.append(warning_msg)
+            print(f"Warning: {warning_msg}")
 
         # Fallback regex for FROM/JOIN - more specific patterns
         from_join_patterns = [
@@ -792,7 +810,7 @@ class ETLLineageAnalyzer:
             return str(identifier)
         return None
 
-    def _extract_source_tables_from_select(self, statement: str) -> List[str]:
+    def _extract_source_tables_from_select(self, statement: str, warnings: List[str] = None) -> List[str]:
         """Extract source tables from SELECT statement, recursively."""
         # For CREATE VOLATILE TABLE, we need to extract tables from the SELECT part
         # Remove the CREATE VOLATILE TABLE part to focus on the SELECT
@@ -809,15 +827,16 @@ class ETLLineageAnalyzer:
                 r"\)\s*WITH\s+DATA.*$", "", select_part, flags=re.IGNORECASE | re.DOTALL
             )
 
-        return self._extract_all_source_tables(select_part)
+        return self._extract_all_source_tables(select_part, warnings)
 
-    def _extract_source_tables_from_update(self, statement: str) -> List[str]:
+    def _extract_source_tables_from_update(self, statement: str, warnings: List[str] = None) -> List[str]:
         """Extract source tables from UPDATE statement (Teradata format), recursively."""
-        return self._extract_all_source_tables(statement)
+        return self._extract_all_source_tables(statement, warnings)
 
     def analyze_script(self, script_path: str) -> LineageInfo:
         """Analyze an ETL script and extract lineage information"""
         script_path_obj = Path(script_path)
+        warnings = []
 
         if not script_path_obj.exists():
             raise FileNotFoundError(f"Script file not found: {script_path_obj}")
@@ -829,13 +848,14 @@ class ETLLineageAnalyzer:
         sql_blocks = self.extract_sql_blocks(content)
 
         if not sql_blocks:
+            warnings.append("No SQL blocks found in the script")
             raise ValueError("No SQL blocks found in the script")
 
         # Combine all SQL blocks
         combined_sql = "\n".join(sql_blocks)
 
         # Extract operations
-        operations = self.extract_operations(combined_sql)
+        operations = self.extract_operations(combined_sql, warnings)
 
         # Separate source and target tables
         source_tables = set()
@@ -865,6 +885,7 @@ class ETLLineageAnalyzer:
             target_tables=target_tables,
             operations=operations,
             table_relationships=table_relationships,
+            warnings=warnings,
         )
 
     def print_lineage_report(self, lineage_info: LineageInfo) -> None:
@@ -879,6 +900,7 @@ class ETLLineageAnalyzer:
         print(f"   • Source Tables: {len(lineage_info.source_tables)}")
         print(f"   • Target Tables: {len(lineage_info.target_tables)}")
         print(f"   • Volatile Tables: {len(lineage_info.volatile_tables)}")
+        print(f"   • Warnings: {len(lineage_info.warnings)}")
 
         print("\n🔍 SOURCE TABLES:")
         for table in sorted(lineage_info.source_tables):
@@ -892,6 +914,11 @@ class ETLLineageAnalyzer:
             print("\n⚡ VOLATILE TABLES (Temporary):")
             for table in lineage_info.volatile_tables:
                 print(f"   • {table}")
+
+        if lineage_info.warnings:
+            print("\n⚠️ WARNINGS:")
+            for warning in lineage_info.warnings:
+                print(f"   • {warning}")
 
         print("\n🔄 TABLE RELATIONSHIPS:")
         for target, sources in lineage_info.table_relationships.items():
@@ -1055,13 +1082,24 @@ class ETLLineageAnalyzer:
                             "operation": [statement_index]
                         })
         
+        # Add warning if no BTEQ statements were found
+        if not bteq_statements:
+            print(f"⚠️ Warning: No BTEQ statements found in {lineage_info.script_name}. This might indicate:")
+            print(f"   - No BTEQ blocks detected in the script")
+            print(f"   - All BTEQ statements were filtered out during cleaning")
+            print(f"   - Script contains only BTEQ control statements (no SQL)")
+        
         data = {
             "script_name": lineage_info.script_name,
             "bteq_statements": bteq_statements,
-            "tables": tables_data
+            "tables": tables_data,
+            "warnings": lineage_info.warnings
         }
 
         if output_file:
+            # Delete existing file if it exists
+            if Path(output_file).exists():
+                Path(output_file).unlink()
             with open(output_file, "w") as f:
                 json.dump(data, f, indent=2)
             print(f"\n💾 Lineage data exported to: {output_file}")
@@ -1134,6 +1172,10 @@ class ETLLineageAnalyzer:
                 
                 cleaned_lines.append(line)
             final_sql = '\n'.join(cleaned_lines)
+            
+            # Remove BTEQ comments (/* ... */) from the final SQL
+            final_sql = re.sub(r"/\*.*?\*/", "", final_sql, flags=re.DOTALL)
+            
             # Format each SQL statement using sqlparse
             formatted_sql = []
             for statement in sqlparse.split(final_sql):
@@ -1145,6 +1187,9 @@ class ETLLineageAnalyzer:
                 )
                 formatted_sql.append(formatted.strip())
             pretty_sql = '\n\n'.join(formatted_sql)
+            # Delete existing file if it exists
+            if Path(output_file).exists():
+                Path(output_file).unlink()
             # Write to .bteq file
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(pretty_sql)
@@ -1181,11 +1226,19 @@ class ETLLineageAnalyzer:
         # Process each file
         successful_files = []
         failed_files = []
+        total_warnings = 0
+        files_with_warnings = 0
 
         for script_file in script_files:
             try:
                 print(f"\nProcessing: {script_file.name}")
                 lineage_info = self.analyze_script(str(script_file))
+
+                # Track warnings
+                if lineage_info.warnings:
+                    total_warnings += len(lineage_info.warnings)
+                    files_with_warnings += 1
+                    print(f"⚠️ Found {len(lineage_info.warnings)} warnings in {script_file.name}")
 
                 # Generate JSON report with extension included
                 json_file = (
@@ -1207,6 +1260,9 @@ class ETLLineageAnalyzer:
 
         # Generate summary report
         summary_file = output_path / "processing_summary.yaml"
+        # Delete existing file if it exists
+        if summary_file.exists():
+            summary_file.unlink()
         with open(summary_file, "w") as f:
             f.write(f"# ETL Lineage Analysis Summary\n")
             f.write(f"generated_on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -1215,7 +1271,9 @@ class ETLLineageAnalyzer:
             f.write(f"statistics:\n")
             f.write(f"  total_files_found: {len(script_files)}\n")
             f.write(f"  successfully_processed: {len(successful_files)}\n")
-            f.write(f"  failed_to_process: {len(failed_files)}\n\n")
+            f.write(f"  failed_to_process: {len(failed_files)}\n")
+            f.write(f"  total_warnings: {total_warnings}\n")
+            f.write(f"  files_with_warnings: {files_with_warnings}\n\n")
 
             if successful_files:
                 f.write("successfully_processed_files:\n")
@@ -1233,10 +1291,15 @@ class ETLLineageAnalyzer:
         print(f"   • Total files: {len(script_files)}")
         print(f"   • Successful: {len(successful_files)}")
         print(f"   • Failed: {len(failed_files)}")
+        print(f"   • Total warnings: {total_warnings}")
+        print(f"   • Files with warnings: {files_with_warnings}")
         print(f"   • Summary report: {summary_file}")
 
         # Generate list of JSON files (sorted alphabetically)
         json_files_list = output_path / "all_lineage.txt"
+        # Delete existing file if it exists
+        if json_files_list.exists():
+            json_files_list.unlink()
         with open(json_files_list, "w") as f:
             # Create list of JSON filenames and sort them alphabetically
             json_filenames = []
@@ -1291,6 +1354,9 @@ Examples:
         "--export", help="Export lineage data to specific JSON file (for single file mode)"
     )
 
+    parser.add_argument(
+        "--report", action="store_true", help="Show formatted report instead of JSON output (for single file mode)"
+    )
 
 
     args = parser.parse_args()
@@ -1302,10 +1368,14 @@ Examples:
         # Check if input is a file or folder
         if input_path.is_file():
             # Single file mode
-            if not args.output_folder and not args.export:
+            if not args.output_folder and not args.export and not args.report:
                 # Default behavior: output JSON to stdout
                 lineage_info = analyzer.analyze_script(args.input)
                 analyzer.export_to_json(lineage_info)
+            elif args.report:
+                # Show formatted report
+                lineage_info = analyzer.analyze_script(args.input)
+                analyzer.print_lineage_report(lineage_info)
             elif args.export:
                 # Export to specified file
                 lineage_info = analyzer.analyze_script(args.input)
@@ -1319,7 +1389,8 @@ Examples:
                 
                 # Generate JSON file
                 script_name = Path(args.input).stem
-                json_file = output_path / f"{script_name}_lineage.json"
+                script_extension = Path(args.input).suffix[1:]  # Remove the dot
+                json_file = output_path / f"{script_name}_{script_extension}_lineage.json"
                 analyzer.export_to_json(lineage_info, str(json_file))
                 
                 # Generate BTEQ SQL file
@@ -1330,7 +1401,7 @@ Examples:
                 print(f"   • {json_file.name} - Lineage data")
                 print(f"   • {bteq_file.name} - Cleaned BTEQ SQL")
             else:
-                print("❌ Error: For single file mode, use --export or specify output folder")
+                print("❌ Error: For single file mode, use --export, --report, or specify output folder")
                 sys.exit(1)
 
         elif input_path.is_dir():

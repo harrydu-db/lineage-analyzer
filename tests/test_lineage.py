@@ -199,6 +199,29 @@ class TestETLLineageAnalyzer:
         assert "temp_table" in cleaned
         # Should remove BTEQ control statements before CREATE
 
+    def test_bteq_multiline_and_preceding_comments_removal(self):
+        """Test that multi-line and pre-statement BTEQ comments are removed by _clean_bteq_sql_for_json"""
+        sql_with_comments = """
+        /* This is a multi-line
+           BTEQ comment that should be removed */
+        /* Another comment */
+        CREATE VOLATILE TABLE test_table AS (
+            SELECT * FROM source_table /* inline comment */
+        )WITH DATA ON COMMIT PRESERVE ROWS;
+        /* Trailing comment */
+        """
+        cleaned = self.analyzer._clean_bteq_sql_for_json(sql_with_comments)
+        # All comments should be removed
+        assert "/*" not in cleaned
+        assert "This is a multi-line" not in cleaned
+        assert "Another comment" not in cleaned
+        assert "inline comment" not in cleaned
+        assert "Trailing comment" not in cleaned
+        # The CREATE statement and table name should remain
+        assert "CREATE VOLATILE TABLE" in cleaned
+        assert "test_table" in cleaned
+        assert "SELECT * FROM source_table" in cleaned
+
     def test_dot_command_handling(self):
         """Test comprehensive dot command handling with case insensitivity"""
         
