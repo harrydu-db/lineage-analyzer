@@ -1699,6 +1699,19 @@ ${statement}
             }
         }
 
+        // Helper function to determine node color based on edge relationships and volatility
+        function getNodeColor(table) {
+            if (table.is_volatile) {
+                return '#ff9800'; // Yellow for volatile tables
+            } else if (table.source.length === 0) {
+                return '#28a745'; // Green for tables with no in-edges (no sources)
+            } else if (table.target.length === 0) {
+                return '#dc3545'; // Red for tables with no out-edges (no targets)
+            } else {
+                return '#007bff'; // Blue for all other tables
+            }
+        }
+
         function createNetworkVisualization() {
             const container = document.getElementById('networkContainer');
             
@@ -1715,7 +1728,7 @@ ${statement}
                     id: tableName,
                     label: tableName,
                     title: `${tableName}\nSources: ${table.source.length}\nTargets: ${table.target.length}\nVolatile: ${table.is_volatile ? 'Yes' : 'No'}`,
-                    color: table.is_volatile ? '#ff9800' : '#007bff',
+                    color: getNodeColor(table),
                     size: 20 + Math.min(table.source.length + table.target.length, 10) * 2,
                     font: {
                         size: 12,
@@ -1978,7 +1991,7 @@ ${statement}
                         id: tableName,
                         label: tableName,
                         title: `${tableName}\nSources: ${tableData.source.length}\nTargets: ${tableData.target.length}\nVolatile: ${tableData.is_volatile ? 'Yes' : 'No'}`,
-                        color: isSelected ? '#007bff' : (tableData.is_volatile ? '#ff9800' : '#28a745'),
+                        color: isSelected ? '#007bff' : getNodeColor(tableData),
                         size: isSelected ? 30 : (20 + Math.min(tableData.source.length + tableData.target.length, 10) * 2),
                         font: {
                             size: isSelected ? 16 : 12,
@@ -2204,7 +2217,7 @@ ${sqlStatement}
                         id: key,
                         label: tableName,
                         title: `${tableName}\nSources: ${table.source.length}\nTargets: ${table.target.length}\nVolatile: ${table.is_volatile ? 'Yes' : 'No'}`,
-                        color: table.is_volatile ? '#ff9800' : '#007bff',
+                        color: getNodeColor(table),
                         size: 20 + Math.min((table.source?.length || 0) + (table.target?.length || 0), 10) * 2,
                         font: { size: 12, face: 'Arial' }
                     });
