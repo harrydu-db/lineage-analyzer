@@ -851,12 +851,10 @@
         }
 
         // Helper function to convert operation indices to script names with local indices
-        function getOperationDisplayText(operationIndices, scriptName) {
-            return operationIndices.map(opIndex => {
-                // Use the provided scriptName for context
-                const opKey = scriptName + '::' + opIndex;
-                return `${scriptName}:${opIndex}`;
-            }).join(', ');
+        function getOperationDisplayText(operationGroups) {
+            // operationGroups: Array of {scriptName: string, indices: number[]}
+            if (!operationGroups || operationGroups.length === 0) return '';
+            return operationGroups.map(group => `${group.scriptName}:${group.indices.join('|')}`).join(', ');
         }
 
         // Check for JSON file path or folder in URL parameters on page load
@@ -1820,7 +1818,7 @@ ${statement}
                     if (!edgeMap.has(edgeKey)) {
                         edgeMap.set(edgeKey, true);
                         
-                        const operations = getOperationDisplayText(sourceRel.operation, table.script_name || 'Unknown');
+                        const operations = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: sourceRel.operation }]);
                         edges.push({
                             from: sourceRel.name,
                             to: tableName,
@@ -1843,7 +1841,7 @@ ${statement}
                     if (!edgeMap.has(edgeKey)) {
                         edgeMap.set(edgeKey, true);
                         
-                        const operations = getOperationDisplayText(targetRel.operation, table.script_name || 'Unknown');
+                        const operations = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: targetRel.operation }]);
                         edges.push({
                             from: tableName,
                             to: targetRel.name,
@@ -2088,7 +2086,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(sourceRel.operation, tableData.script_name || 'Unknown');
+                                const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: sourceRel.operation }]);
                                 edges.push({
                                     from: sourceRel.name,
                                     to: tableName,
@@ -2112,7 +2110,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(targetRel.operation, tableData.script_name || 'Unknown');
+                                const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: targetRel.operation }]);
                                 edges.push({
                                     from: tableName,
                                     to: targetRel.name,
@@ -2235,7 +2233,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(sourceRel.operation, tableData.script_name || 'Unknown');
+                                const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: sourceRel.operation }]);
                                 edges.push({
                                     from: sourceRel.name,
                                     to: tableName,
@@ -2259,7 +2257,7 @@ ${statement}
                             if (!edgeMap.has(edgeKey)) {
                                 edgeMap.set(edgeKey, true);
                                 
-                                const operations = getOperationDisplayText(targetRel.operation, tableData.script_name || 'Unknown');
+                                const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: targetRel.operation }]);
                                 edges.push({
                                     from: tableName,
                                     to: targetRel.name,
@@ -2347,59 +2345,74 @@ ${statement}
             const edge = network.body.data.edges.get(edgeId);
             const fromTable = edge.from;
             const toTable = edge.to;
-            const operations = edge.label.split(', ');
-            
+            const label = edge.label;
+            // New format: 'ScriptA.sh:0|1|2|3|4|5|6|7|8|9, ScriptB.sh:1'
+            // Parse into [{scriptName, indices: [..]}, ...]
+            let opGroups = [];
+            label.split(',').forEach(part => {
+                const trimmed = part.trim();
+                const match = trimmed.match(/^(.*?):([\d|]+)$/);
+                if (match) {
+                    const scriptName = match[1];
+                    const indices = match[2].split('|').map(x => parseInt(x, 10)).filter(x => !isNaN(x));
+                    if (indices.length > 0) {
+                        opGroups.push({scriptName, indices});
+                    }
+                }
+            });
             // Update title
             sidePanelTitle.textContent = `${fromTable} → ${toTable}`;
-            
             // Create content with SQL statements
             let content = `
                 <div style="margin-bottom: 20px;">
                     <h4 style="color: #495057; margin-bottom: 10px;">Data Flow</h4>
                     <p><strong>From:</strong> ${fromTable}</p>
                     <p><strong>To:</strong> ${toTable}</p>
-                    <p><strong>Operations:</strong> ${operations.join(', ')}</p>
+                    <p><strong>Operations:</strong> ${label}</p>
                 </div>
                 <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
                     <h4 style="color: #495057; margin-bottom: 15px;">SQL Statements</h4>
             `;
-            
             // Add each SQL statement
-            operations.forEach((op, index) => {
-                // op is now in the format 'script_name:local_index'
-                // We need to find the global index for this op
-                let globalIndex = null;
-                if (lineageData.file_groups) {
-                    // Multi-file mode
-                    for (const [scriptName, fileGroup] of Object.entries(lineageData.file_groups)) {
-                        const match = op.match(/^(.*):(\d+)$/);
-                        if (match && match[1] === scriptName) {
-                            const localIdx = parseInt(match[2]);
-                            globalIndex = fileGroup.statements[localIdx];
+            opGroups.forEach(group => {
+                let fileGroup = null;
+                if (lineageData.file_groups && lineageData.file_groups[group.scriptName]) {
+                    fileGroup = lineageData.file_groups[group.scriptName];
+                } else if (lineageData.file_groups) {
+                    // Try to find by normalized script name
+                    for (const [key, fg] of Object.entries(lineageData.file_groups)) {
+                        let normKey = key.split('/').pop().replace(/\.json$/i, '');
+                        if (normKey.match(/_sh_lineage$/i)) normKey = normKey.replace(/_sh_lineage$/i, '.sh');
+                        else if (normKey.match(/_ksh_lineage$/i)) normKey = normKey.replace(/_ksh_lineage$/i, '.ksh');
+                        else if (normKey.match(/_sql_lineage$/i)) normKey = normKey.replace(/_sql_lineage$/i, '.sql');
+                        else if (normKey.match(/_lineage$/i)) normKey = normKey.replace(/_lineage$/i, '');
+                        if (normKey === group.scriptName) {
+                            fileGroup = fg;
                             break;
                         }
                     }
-                } else {
-                    // Single file mode
-                    const match = op.match(/^(.*):(\d+)$/);
-                    if (match) {
-                        globalIndex = parseInt(match[2]);
-                    }
                 }
-                if (globalIndex === null || isNaN(globalIndex)) return;
-                const sqlStatement = lineageData.bteq_statements[globalIndex];
-                content += `
-                    <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;">
-                        <h5 style="color: #007bff; margin-bottom: 10px;">${op}</h5>
-                        <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.4; max-height: 200px; overflow-y: auto; border: 1px solid #e9ecef;">
+                group.indices.forEach(localIdx => {
+                    let globalIndex = null;
+                    if (fileGroup && fileGroup.statements && fileGroup.statements.length > localIdx) {
+                        globalIndex = fileGroup.statements[localIdx];
+                    } else if (!lineageData.file_groups && lineageData.bteq_statements.length > localIdx) {
+                        globalIndex = localIdx;
+                    }
+                    if (globalIndex !== null && !isNaN(globalIndex)) {
+                        const sqlStatement = lineageData.bteq_statements[globalIndex];
+                        content += `
+                            <div style=\"background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;\">
+                                <h5 style=\"color: #007bff; margin-bottom: 10px;\">${group.scriptName}:${localIdx}</h5>
+                                <div style=\"background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.4; max-height: 200px; overflow-y: auto; border: 1px solid #e9ecef;\">
 ${sqlStatement}
-                        </div>
-                    </div>
-                `;
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
             });
-            
             content += `</div>`;
-            
             sidePanelContent.innerHTML = content;
             sidePanel.style.display = 'block';
         }
@@ -2471,23 +2484,21 @@ ${sqlStatement}
                         }
                         
                         if (foundSrcKey) {
-                            rel.operation.forEach(opIdx => {
-                                const edgeKey = `${foundSrcKey}->${key}`;
-                                if (!edgeMap.has(edgeKey)) {
-                                    edgeMap.set(edgeKey, true);
-                                    const opLabel = getOperationDisplayText([opIdx], table.script_name);
-                                    edges.push({
-                                        from: foundSrcKey,
-                                        to: key,
-                                        arrows: 'to',
-                                        color: { color: '#28a745', opacity: 0.8 },
-                                        width: 2,
-                                        title: `Operations: ${opLabel}`,
-                                        label: opLabel,
-                                        font: { size: 10, color: '#28a745' }
-                                    });
-                                }
-                            });
+                            const edgeKey = `${foundSrcKey}->${key}`;
+                            if (!edgeMap.has(edgeKey)) {
+                                edgeMap.set(edgeKey, true);
+                                const opLabel = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: rel.operation }]);
+                                edges.push({
+                                    from: foundSrcKey,
+                                    to: key,
+                                    arrows: 'to',
+                                    color: { color: '#28a745', opacity: 0.8 },
+                                    width: 2,
+                                    title: `Operations: ${opLabel}`,
+                                    label: opLabel,
+                                    font: { size: 10, color: '#28a745' }
+                                });
+                            }
                         }
                     });
                     
@@ -2504,23 +2515,21 @@ ${sqlStatement}
                         }
                         
                         if (foundTgtKey) {
-                            rel.operation.forEach(opIdx => {
-                                const edgeKey = `${key}->${foundTgtKey}`;
-                                if (!edgeMap.has(edgeKey)) {
-                                    edgeMap.set(edgeKey, true);
-                                    const opLabel = getOperationDisplayText([opIdx], table.script_name);
-                                    edges.push({
-                                        from: key,
-                                        to: foundTgtKey,
-                                        arrows: 'to',
-                                        color: { color: '#dc3545', opacity: 0.8 },
-                                        width: 2,
-                                        title: `Operations: ${opLabel}`,
-                                        label: opLabel,
-                                        font: { size: 10, color: '#dc3545' }
-                                    });
-                                }
-                            });
+                            const edgeKey = `${key}->${foundTgtKey}`;
+                            if (!edgeMap.has(edgeKey)) {
+                                edgeMap.set(edgeKey, true);
+                                const opLabel = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: rel.operation }]);
+                                edges.push({
+                                    from: key,
+                                    to: foundTgtKey,
+                                    arrows: 'to',
+                                    color: { color: '#dc3545', opacity: 0.8 },
+                                    width: 2,
+                                    title: `Operations: ${opLabel}`,
+                                    label: opLabel,
+                                    font: { size: 10, color: '#dc3545' }
+                                });
+                            }
                         }
                     });
                 }
