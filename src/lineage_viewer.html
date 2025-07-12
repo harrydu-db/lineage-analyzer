@@ -1377,11 +1377,8 @@
 
                             // Use the file group key (fileName) as the script name and clean it up
                             let scriptName = fileName;
-                            // Remove path if present
                             scriptName = scriptName.split('/').pop();
-                            // Remove .json extension if present
                             scriptName = scriptName.replace(/\.json$/i, '');
-                            // Convert *_sh_lineage or *_ksh_lineage to .sh/.ksh
                             if (scriptName.match(/_sh_lineage$/i)) {
                                 scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
                             } else if (scriptName.match(/_ksh_lineage$/i)) {
@@ -1399,14 +1396,13 @@
                                         <span>📄 ${scriptName} (${statements.length})</span>
                                     </div>
                                     <div class="tree-children" id="${fileName}-statements">
-                                        ${statements.map(statementIndex => {
-                                            const statement = lineageData.bteq_statements[statementIndex];
+                                        ${statements.map((globalIndex, localIndex) => {
+                                            const statement = lineageData.bteq_statements[globalIndex];
                                             const firstLine = statement.split('\n')[0].trim();
                                             const displayText = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
-                                            
                                             return `
-                                                <div class="tree-item" onclick="selectStatement(${statementIndex})">
-                                                    <div style="font-weight: bold;">Statement ${getStatementInfo(statementIndex).displayText}</div>
+                                                <div class="tree-item" onclick="selectStatementByScript('${fileName}', ${localIndex})">
+                                                    <div style="font-weight: bold;">Statement ${scriptName}:${localIndex}</div>
                                                     <div style="font-size: 0.8em; color: #6c757d;">
                                                         ${displayText}
                                                     </div>
@@ -1422,16 +1418,24 @@
             } else {
                 // Simple list for single file
                 const statements = lineageData.bteq_statements;
-                
+                let scriptName = Object.keys(lineageData.file_groups)[0];
+                scriptName = scriptName.split('/').pop();
+                scriptName = scriptName.replace(/\.json$/i, '');
+                if (scriptName.match(/_sh_lineage$/i)) {
+                    scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
+                } else if (scriptName.match(/_ksh_lineage$/i)) {
+                    scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
+                } else if (scriptName.match(/_sql_lineage$/i)) {
+                    scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
+                } else if (scriptName.match(/_lineage$/i)) {
+                    scriptName = scriptName.replace(/_lineage$/i, '');
+                }
                 statementList.innerHTML = statements.map((statement, index) => {
-                    // Get the first line of the statement for display
                     const firstLine = statement.split('\n')[0].trim();
                     const displayText = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
-                    const statementInfo = getStatementInfo(index);
-                    
                     return `
-                        <li class="statement-item" onclick="selectStatement(${index})">
-                            <div style="font-weight: bold;">${statementInfo.displayText}</div>
+                        <li class="statement-item" onclick="selectStatementByScript('${Object.keys(lineageData.file_groups)[0]}', ${index})">
+                            <div style="font-weight: bold;">${scriptName}:${index}</div>
                             <div style="font-size: 0.8em; color: #6c757d;">
                                 ${displayText}
                             </div>
@@ -1439,6 +1443,57 @@
                     `;
                 }).join('');
             }
+        }
+
+        // New function to select statement by script and local index
+        function selectStatementByScript(scriptKey, localIndex) {
+            // Update selected state
+            document.querySelectorAll('.statement-item, .tree-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            event.target.closest('.statement-item, .tree-item').classList.add('selected');
+            // Clear table selection
+            document.querySelectorAll('.table-item, .tree-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            displayStatementDetailsByScript(scriptKey, localIndex);
+        }
+
+        // New function to display statement details by script and local index
+        function displayStatementDetailsByScript(scriptKey, localIndex) {
+            const contentArea = document.getElementById('statementContentArea');
+            const fileGroup = lineageData.file_groups[scriptKey];
+            if (!fileGroup) {
+                contentArea.innerHTML = `<div class="error">Script not found.</div>`;
+                return;
+            }
+            const globalIndex = fileGroup.statements[localIndex];
+            const statement = lineageData.bteq_statements[globalIndex];
+            // Clean up script name for display
+            let scriptName = scriptKey.split('/').pop();
+            scriptName = scriptName.replace(/\.json$/i, '');
+            if (scriptName.match(/_sh_lineage$/i)) {
+                scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
+            } else if (scriptName.match(/_ksh_lineage$/i)) {
+                scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
+            } else if (scriptName.match(/_sql_lineage$/i)) {
+                scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
+            } else if (scriptName.match(/_lineage$/i)) {
+                scriptName = scriptName.replace(/_lineage$/i, '');
+            }
+            contentArea.innerHTML = `
+                <div class="table-details">
+                    <div class="table-header">
+                        <div class="table-name">SQL Statement ${scriptName}:${localIndex}</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 20px;">
+                        <h4 style="margin-bottom: 15px; color: #495057;">Formatted SQL:</h4>
+                        <div style="background: white; padding: 20px; border-radius: 8px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 14px; line-height: 1.5; max-height: 500px; overflow-y: auto; border: 1px solid #dee2e6;">
+${statement}
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         function displayNetworkFileGroups() {
