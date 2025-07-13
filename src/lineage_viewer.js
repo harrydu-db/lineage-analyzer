@@ -4,93 +4,554 @@ let network = null;
 
 // Track the currently selected script in the network view
 let selectedNetworkScript = null;
+// Track the currently selected table filters in the network view
+let selectedTableFilters = [];
 
-// Mappings for fast lookup
-let tableKeyMap = {};
-let operationKeyMap = {};
+// Global data structures for proper ownership modeling
+let allNodes = {};
+let allEdges = [];
 
-// Build mappings after data load
-function buildScriptAwareMappings() {
-    tableKeyMap = {};
-    operationKeyMap = {};
-    if (!lineageData || !lineageData.tables) return;
-    // Build tableKeyMap
-    for (const [tableName, tableObj] of Object.entries(lineageData.tables)) {
-        const scriptName = tableObj.script_name || 'Unknown';
-        const key = scriptName + '::' + tableName;
-        tableKeyMap[key] = tableObj;
-        // Build operationKeyMap for sources
-        if (tableObj.source) {
-            tableObj.source.forEach(rel => {
-                if (rel.operation) {
-                    rel.operation.forEach(opIdx => {
-                        const opKey = scriptName + '::' + opIdx;
-                        operationKeyMap[opKey] = lineageData.bteq_statements[opIdx];
-                    });
-                }
-            });
-        }
-        // Build operationKeyMap for targets
-        if (tableObj.target) {
-            tableObj.target.forEach(rel => {
-                if (rel.operation) {
-                    rel.operation.forEach(opIdx => {
-                        const opKey = scriptName + '::' + opIdx;
-                        operationKeyMap[opKey] = lineageData.bteq_statements[opIdx];
-                    });
-                }
-            });
-        }
-    }
-}
+// Build proper ownership-based data model
+function buildOwnershipModel() {
+    allNodes = {};
+    allEdges = [];
+    
+    if (!lineageData || !lineageData.scripts) return;
+    
 
-// Call buildScriptAwareMappings after data load
-// (add this call in all data load functions, e.g., after lineageData is set)
-
-// Helper function to get script name and local index for a statement
-function getStatementInfo(globalIndex) {
-    // Find the script and local index for this operation index
-    for (const [tableName, tableObj] of Object.entries(lineageData.tables)) {
-        const scriptName = tableObj.script_name || 'Unknown';
-        // Check if this table's script has this op index
-        if (lineageData.file_groups) {
-            for (const [fileName, fileGroup] of Object.entries(lineageData.file_groups)) {
-                if (fileGroup.statements.includes(globalIndex) && tableObj.script_name) {
-                    const localIndex = fileGroup.statements.indexOf(globalIndex);
-                    return {
-                        scriptName: scriptName,
-                        localIndex: localIndex,
-                        displayText: `${scriptName}:${localIndex}`,
-                        operationKey: scriptName + '::' + globalIndex
-                    };
-                }
+    
+    console.log('Building ownership model...');
+    console.log('Total scripts to process:', Object.keys(lineageData.scripts).length);
+    
+    // PASS 1: Build all nodes with proper ownership
+    console.log('=== PASS 1: Building nodes ===');
+    
+    // First, create nodes for all defined tables from each script
+    for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+        console.log(`Processing script: ${scriptName}`);
+        
+        for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
+            // Determine node ID based on volatility
+            let nodeId;
+            if (tableObj.is_volatile) {
+                // Volatile tables are script-specific
+                nodeId = `${scriptName}::${tableName}`;
+            } else {
+                // Non-volatile tables are global
+                nodeId = tableName;
             }
-        } else {
-            // Single file mode
-            if (tableObj.script_name) {
-                return {
-                    scriptName: scriptName,
-                    localIndex: globalIndex,
-                    displayText: `${scriptName}:${globalIndex}`,
-                    operationKey: scriptName + '::' + globalIndex
+            
+            // Create or update node
+            if (allNodes[nodeId]) {
+                // Node already exists (global table used by multiple scripts)
+                if (!allNodes[nodeId].owners.includes(scriptName)) {
+                    allNodes[nodeId].owners.push(scriptName);
+                }
+            } else {
+                // Create new node
+                allNodes[nodeId] = {
+                    id: nodeId,
+                    name: tableName,
+                    is_volatile: tableObj.is_volatile,
+                    owners: [scriptName],
+                    source: tableObj.source || [],
+                    target: tableObj.target || [],
+                    properties: { ...tableObj, script_name: scriptName }
                 };
             }
+            
+            console.log(`Created/updated node: ${nodeId} (${tableObj.is_volatile ? 'volatile' : 'global'})`);
         }
     }
-    // Fallback
-    return {
-        scriptName: 'Unknown',
-        localIndex: globalIndex,
-        displayText: `Unknown:${globalIndex}`,
-        operationKey: 'Unknown::' + globalIndex
-    };
+    
+    // Second, ensure all referenced tables (that might not be defined) are also included
+    for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+        for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
+            // Process source relationships to ensure referenced tables exist as nodes
+            if (tableObj.source) {
+                tableObj.source.forEach(rel => {
+                    // Find the source table in any script
+                    let sourceTable = null;
+                    let sourceScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            sourceTable = sData.tables[rel.name];
+                            sourceScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    let sourceNodeId;
+                    if (sourceTable && sourceTable.is_volatile) {
+                        // Source is volatile, needs script prefix
+                        sourceNodeId = `${sourceScript}::${rel.name}`;
+                    } else {
+                        // Source is global (or doesn't exist in our data)
+                        sourceNodeId = rel.name;
+                    }
+                    
+                    // Create node for referenced table if it doesn't exist
+                    if (!allNodes[sourceNodeId]) {
+                        allNodes[sourceNodeId] = {
+                            id: sourceNodeId,
+                            name: rel.name,
+                            is_volatile: sourceTable ? sourceTable.is_volatile : false,
+                            owners: sourceTable ? [sourceScript] : [],
+                            source: sourceTable ? (sourceTable.source || []) : [],
+                            target: sourceTable ? (sourceTable.target || []) : [],
+                            properties: sourceTable ? { ...sourceTable, script_name: sourceScript } : { name: rel.name }
+                        };
+                        console.log(`Created referenced node: ${sourceNodeId} (${sourceTable ? (sourceTable.is_volatile ? 'volatile' : 'global') : 'external'})`);
+                    }
+                });
+            }
+            
+            // Process target relationships to ensure referenced tables exist as nodes
+            if (tableObj.target) {
+                tableObj.target.forEach(rel => {
+                    // Find the target table in any script
+                    let targetTable = null;
+                    let targetScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            targetTable = sData.tables[rel.name];
+                            targetScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    let targetNodeId;
+                    if (targetTable && targetTable.is_volatile) {
+                        // Target is volatile, needs script prefix
+                        targetNodeId = `${targetScript}::${rel.name}`;
+                    } else {
+                        // Target is global (or doesn't exist in our data)
+                        targetNodeId = rel.name;
+                    }
+                    
+                    // Create node for referenced table if it doesn't exist
+                    if (!allNodes[targetNodeId]) {
+                        allNodes[targetNodeId] = {
+                            id: targetNodeId,
+                            name: rel.name,
+                            is_volatile: targetTable ? targetTable.is_volatile : false,
+                            owners: targetTable ? [targetScript] : [],
+                            source: targetTable ? (targetTable.source || []) : [],
+                            target: targetTable ? (targetTable.target || []) : [],
+                            properties: targetTable ? { ...targetTable, script_name: targetScript } : { name: rel.name }
+                        };
+                        console.log(`Created referenced node: ${targetNodeId} (${targetTable ? (targetTable.is_volatile ? 'volatile' : 'global') : 'external'})`);
+                    }
+                });
+            }
+        }
+    }
+    
+    console.log(`PASS 1 complete: ${Object.keys(allNodes).length} nodes created`);
+    
+    // PASS 2: Build all edges using complete node information
+    console.log('=== PASS 2: Building edges ===');
+    for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+        for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
+            // Determine current node ID
+            let currentNodeId;
+            if (tableObj.is_volatile) {
+                currentNodeId = `${scriptName}::${tableName}`;
+            } else {
+                currentNodeId = tableName;
+            }
+            
+            // Process source relationships (tables that provide data to this table)
+            if (tableObj.source) {
+                tableObj.source.forEach(rel => {
+                    // Find the source table in any script
+                    let sourceTable = null;
+                    let sourceScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            sourceTable = sData.tables[rel.name];
+                            sourceScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    // Determine source node ID based on the source table's properties
+                    let sourceNodeId;
+                    if (sourceTable && sourceTable.is_volatile) {
+                        // Source is volatile, needs script prefix
+                        sourceNodeId = `${sourceScript}::${rel.name}`;
+                    } else {
+                        // Source is global (or doesn't exist in our data)
+                        sourceNodeId = rel.name;
+                    }
+                    
+                    // Only create edge if both nodes exist
+                    if (allNodes[sourceNodeId] && allNodes[currentNodeId]) {
+                        // Create edge
+                        const edgeKey = `${sourceNodeId}->${currentNodeId}`;
+                        const existingEdge = allEdges.find(e => e[0] === sourceNodeId && e[1] === currentNodeId);
+                        
+                        if (existingEdge) {
+                            // Edge already exists, but only add operations if this is the script that defines this relationship
+                            // Check if this script owns the target table (for source relationships)
+                            const targetNode = allNodes[currentNodeId];
+                            if (targetNode && targetNode.owners && targetNode.owners.includes(scriptName)) {
+                                if (rel.operation && rel.operation.length > 0) {
+                                    const existingOps = new Set(existingEdge[2]);
+                                    rel.operation.forEach(opIndex => {
+                                        existingOps.add(`${scriptName}::op${opIndex}`);
+                                    });
+                                    existingEdge[2] = Array.from(existingOps);
+                                }
+                            }
+                        } else {
+                            // Create new edge - only if this script owns the target table AND there are operations
+                            const targetNode = allNodes[currentNodeId];
+                            if (targetNode && targetNode.owners && targetNode.owners.includes(scriptName) && rel.operation && rel.operation.length > 0) {
+                                const operations = rel.operation.map(opIndex => `${scriptName}::op${opIndex}`);
+                                allEdges.push([sourceNodeId, currentNodeId, operations]);
+                                console.log(`Created edge: ${sourceNodeId} -> ${currentNodeId} (${operations.length} operations) from script ${scriptName}`);
+                            }
+                        }
+                    } else {
+                        console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (one or both nodes don't exist)`);
+                    }
+                });
+            }
+            
+            // Process target relationships (tables that receive data from this table)
+            if (tableObj.target) {
+                tableObj.target.forEach(rel => {
+                    // Find the target table in any script
+                    let targetTable = null;
+                    let targetScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            targetTable = sData.tables[rel.name];
+                            targetScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    // Determine target node ID based on the target table's properties
+                    let targetNodeId;
+                    if (targetTable && targetTable.is_volatile) {
+                        // Target is volatile, needs script prefix
+                        targetNodeId = `${targetScript}::${rel.name}`;
+                    } else {
+                        // Target is global (or doesn't exist in our data)
+                        targetNodeId = rel.name;
+                    }
+                    
+                    // Only create edge if both nodes exist
+                    if (allNodes[currentNodeId] && allNodes[targetNodeId]) {
+                        // Create edge
+                        const edgeKey = `${currentNodeId}->${targetNodeId}`;
+                        const existingEdge = allEdges.find(e => e[0] === currentNodeId && e[1] === targetNodeId);
+                        
+                        if (existingEdge) {
+                            // Edge already exists, but only add operations if this is the script that defines this relationship
+                            // Check if this script owns the source table (for target relationships)
+                            const sourceNode = allNodes[currentNodeId];
+                            if (sourceNode && sourceNode.owners && sourceNode.owners.includes(scriptName)) {
+                                if (rel.operation && rel.operation.length > 0) {
+                                    const existingOps = new Set(existingEdge[2]);
+                                    rel.operation.forEach(opIndex => {
+                                        existingOps.add(`${scriptName}::op${opIndex}`);
+                                    });
+                                    existingEdge[2] = Array.from(existingOps);
+                                }
+                            }
+                        } else {
+                            // Create new edge - only if this script owns the source table AND there are operations
+                            const sourceNode = allNodes[currentNodeId];
+                            if (sourceNode && sourceNode.owners && sourceNode.owners.includes(scriptName) && rel.operation && rel.operation.length > 0) {
+                                const operations = rel.operation.map(opIndex => `${scriptName}::op${opIndex}`);
+                                allEdges.push([currentNodeId, targetNodeId, operations]);
+                                console.log(`Created edge: ${currentNodeId} -> ${targetNodeId} (${operations.length} operations) from script ${scriptName}`);
+                            }
+                        }
+                    } else {
+                        console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (one or both nodes don't exist)`);
+                    }
+                });
+            }
+        }
+    }
+    
+    console.log(`PASS 2 complete: ${allEdges.length} edges created`);
+    
+    // PASS 3: Discover all script owners for each table
+    console.log('=== PASS 3: Discovering all owners ===');
+    
+    // Create a map to track all scripts that reference each table
+    const tableOwners = {};
+    
+    // First pass: Initialize ownership for all tables
+    for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+        for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
+            // For volatile tables, track ownership by the full node ID
+            // For global tables, track by table name
+            const ownershipKey = tableObj.is_volatile ? `${scriptName}::${tableName}` : tableName;
+            
+            if (!tableOwners[ownershipKey]) {
+                tableOwners[ownershipKey] = new Set();
+            }
+            
+            // For volatile tables: only the creating script is the owner
+            if (tableObj.is_volatile) {
+                tableOwners[ownershipKey].add(scriptName);
+            } else {
+                // For global tables: the script that defines the table is an owner
+                tableOwners[ownershipKey].add(scriptName);
+            }
+        }
+    }
+    
+    // Second pass: Find all scripts that reference each table through relationships
+    for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+        for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
+            // Scan source relationships to find tables that are referenced
+            if (tableObj.source) {
+                tableObj.source.forEach(rel => {
+                    // Find the source table in any script
+                    let sourceTable = null;
+                    let sourceScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            sourceTable = sData.tables[rel.name];
+                            sourceScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    if (sourceTable && !sourceTable.is_volatile) {
+                        // Any script that references a global table becomes an owner
+                        if (!tableOwners[rel.name]) {
+                            tableOwners[rel.name] = new Set();
+                        }
+                        tableOwners[rel.name].add(scriptName);
+                    }
+                });
+            }
+            
+            // Scan target relationships to find tables that are referenced
+            if (tableObj.target) {
+                tableObj.target.forEach(rel => {
+                    // Find the target table in any script
+                    let targetTable = null;
+                    let targetScript = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            targetTable = sData.tables[rel.name];
+                            targetScript = sName;
+                            break;
+                        }
+                    }
+                    
+                    if (targetTable && !targetTable.is_volatile) {
+                        // Any script that references a global table becomes an owner
+                        if (!tableOwners[rel.name]) {
+                            tableOwners[rel.name] = new Set();
+                        }
+                        tableOwners[rel.name].add(scriptName);
+                    }
+                });
+            }
+        }
+    }
+    
+    // Third pass: Process all nodes to ensure we capture all relationships
+    // This handles cases where tables are referenced but not defined in lineageData.tables
+    for (const [nodeId, node] of Object.entries(allNodes)) {
+        const tableName = node.name;
+        
+        // For volatile tables, we need to track ownership by the full node ID
+        // For global tables, we track by table name
+        const ownershipKey = node.is_volatile ? nodeId : tableName;
+        
+        // Initialize tableOwners for this ownership key if not exists
+        if (!tableOwners[ownershipKey]) {
+            tableOwners[ownershipKey] = new Set();
+        }
+        
+        // Add the defining script as owner (if this node was created from a defined table)
+        if (node.properties && node.properties.script_name) {
+            tableOwners[ownershipKey].add(node.properties.script_name);
+        }
+        
+        // Process source relationships from the node
+        if (node.source) {
+            node.source.forEach(rel => {
+                // Find the source table in any script
+                let sourceTable = null;
+                if (lineageData.scripts) {
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            sourceTable = sData.tables[rel.name];
+                            break;
+                        }
+                    }
+                } else {
+                    // Fallback for legacy single file mode
+                    sourceTable = lineageData.tables && lineageData.tables[rel.name];
+                }
+                
+                if (sourceTable && !sourceTable.is_volatile) {
+                    // Any script that references a global table becomes an owner
+                    if (!tableOwners[rel.name]) {
+                        tableOwners[rel.name] = new Set();
+                    }
+                    // Add the script that owns this node as an owner of the source table
+                    if (node.properties && node.properties.script_name) {
+                        tableOwners[rel.name].add(node.properties.script_name);
+                    }
+                }
+            });
+        }
+        
+        // Process target relationships from the node
+        if (node.target) {
+            node.target.forEach(rel => {
+                // Find the target table in any script
+                let targetTable = null;
+                if (lineageData.scripts) {
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[rel.name]) {
+                            targetTable = sData.tables[rel.name];
+                            break;
+                        }
+                    }
+                } else {
+                    // Fallback for legacy single file mode
+                    targetTable = lineageData.tables && lineageData.tables[rel.name];
+                }
+                
+                if (targetTable && !targetTable.is_volatile) {
+                    // Any script that references a global table becomes an owner
+                    if (!tableOwners[rel.name]) {
+                        tableOwners[rel.name] = new Set();
+                    }
+                    // Add the script that owns this node as an owner of the target table
+                    if (node.properties && node.properties.script_name) {
+                        tableOwners[rel.name].add(node.properties.script_name);
+                    }
+                }
+            });
+        }
+    }
+    
+    // Update all nodes with complete ownership information
+    Object.entries(allNodes).forEach(([nodeId, node]) => {
+        const tableName = node.name;
+        
+        // For volatile tables, look up ownership by the full node ID
+        // For global tables, look up by table name
+        const ownershipKey = node.is_volatile ? nodeId : tableName;
+        
+        if (tableOwners[ownershipKey]) {
+            // Convert Set to Array and sort for consistency
+            const allOwners = Array.from(tableOwners[ownershipKey]).sort();
+            node.owners = allOwners;
+            console.log(`Updated ${nodeId}: owners = [${allOwners.join(', ')}]`);
+            
+            // Validate volatile table ownership
+            if (node.is_volatile && allOwners.length > 1) {
+                console.error(`❌ VIOLATION: Volatile table ${nodeId} has multiple owners: [${allOwners.join(', ')}]`);
+                console.error(`   Volatile tables should only have one owner (the creating script)`);
+                console.error(`   Keeping only the first owner: ${allOwners[0]}`);
+                // Fix the violation by keeping only the first owner
+                node.owners = [allOwners[0]];
+            } else if (node.is_volatile && allOwners.length === 1) {
+                console.log(`✅ Volatile table ${nodeId} correctly has single owner: ${allOwners[0]}`);
+            }
+        }
+    });
+    
+    console.log(`PASS 3 complete: Updated ownership for ${Object.keys(allNodes).length} nodes`);
+    
+    // Final validation: ensure all volatile tables have exactly one owner
+    console.log('=== FINAL VALIDATION ===');
+    let finalViolations = 0;
+    Object.entries(allNodes).forEach(([nodeId, node]) => {
+        if (node.is_volatile) {
+            if (node.owners.length !== 1) {
+                console.error(`❌ FINAL VIOLATION: Volatile table ${nodeId} has ${node.owners.length} owners: [${node.owners.join(', ')}]`);
+                finalViolations++;
+            } else {
+                console.log(`✅ Volatile table ${nodeId} has correct single owner: ${node.owners[0]}`);
+            }
+        }
+    });
+    
+    if (finalViolations === 0) {
+        console.log('✅ All volatile tables have exactly one owner');
+    } else {
+        console.error(`❌ ${finalViolations} volatile table(s) still have incorrect ownership`);
+    }
+    
+    // Validation and summary
+    console.log('=== OWNERSHIP MODEL SUMMARY ===');
+    console.log('Nodes:', Object.keys(allNodes).length);
+    console.log('Edges:', allEdges.length);
+    
+    // Validate volatile table ownership
+    let volatileTableCount = 0;
+    let volatileTableViolations = 0;
+    Object.entries(allNodes).forEach(([nodeId, node]) => {
+        if (node.is_volatile) {
+            volatileTableCount++;
+            if (node.owners.length > 1) {
+                volatileTableViolations++;
+            }
+        }
+    });
+    
+    console.log(`Volatile tables: ${volatileTableCount} total, ${volatileTableViolations} with multiple owners`);
+    if (volatileTableViolations > 0) {
+        console.error(`❌ ${volatileTableViolations} volatile table(s) have multiple owners - this should not happen!`);
+    } else if (volatileTableCount > 0) {
+        console.log(`✅ All ${volatileTableCount} volatile table(s) have single owners`);
+    }
+    
+    // Log node details for debugging
+    console.log('Node details:');
+    Object.entries(allNodes).forEach(([nodeId, node]) => {
+        console.log(`  ${nodeId}: ${node.name} (${node.is_volatile ? 'volatile' : 'global'}) - Owners: ${node.owners.join(', ')}`);
+    });
+    
+    // Log edge details for debugging
+    console.log('Edge details:');
+    allEdges.forEach(([from, to, operations]) => {
+        console.log(`  ${from} -> ${to} (${operations.length} operations)`);
+    });
+    
+    console.log('=== OWNERSHIP MODEL BUILD COMPLETE ===');
 }
 
+
+
+
 // Helper function to convert operation indices to script names with local indices
-function getOperationDisplayText(operationGroups) {
-    // operationGroups: Array of {scriptName: string, indices: number[]}
-    if (!operationGroups || operationGroups.length === 0) return '';
-    return operationGroups.map(group => `${group.scriptName}:${group.indices.join('|')}`).join(', ');
+function getOperationDisplayText(operations) {
+    // operations: Array of strings like "CAMSTAR_LOT_BONUS.sh::op4"
+    if (!operations || operations.length === 0) return '';
+    
+    // Group operations by script
+    const scriptGroups = {};
+    operations.forEach(op => {
+        const [scriptName, opId] = op.split('::');
+        const opIndex = opId.replace('op', '');
+        if (!scriptGroups[scriptName]) {
+            scriptGroups[scriptName] = [];
+        }
+        scriptGroups[scriptName].push(opIndex);
+    });
+    
+    // Convert to display format
+    return Object.entries(scriptGroups)
+        .map(([scriptName, indices]) => `${scriptName}:${indices.join('|')}`)
+        .join(', ');
 }
 
 // Check for JSON file path or folder in URL parameters on page load
@@ -131,12 +592,13 @@ function loadJsonFile() {
                 lineageData.source_file = file.name;
             }
             
-            // Create file groups for single file to maintain consistency
+            // Create script structure for single file to maintain consistency
             const fileName = file.name.replace('_lineage.json', '');
-            lineageData.file_groups = {
+            lineageData.scripts = {
                 [fileName]: {
-                    tables: Object.keys(lineageData.tables || {}),
-                    statements: Array.from({length: lineageData.bteq_statements?.length || 0}, (_, i) => i)
+                    script_name: fileName,
+                    tables: lineageData.tables || {},
+                    bteq_statements: lineageData.bteq_statements || []
                 }
             };
             
@@ -182,12 +644,10 @@ function loadFolder() {
     folderProgress.textContent = `Processing files...`;
     folderInfo.style.display = 'block';
 
-    // Initialize merged data structure with file tracking
+    // Initialize merged data structure with script-based organization
     const mergedData = {
-        tables: {},
-        bteq_statements: [],
-        source_file: `${jsonFiles.length}`,
-        file_groups: {} // Track which file each item came from
+        scripts: {},
+        source_file: `${jsonFiles.length}`
     };
 
     let processedFiles = 0;
@@ -200,42 +660,22 @@ function loadFolder() {
                 const data = JSON.parse(e.target.result);
                 console.log(`Processing file: ${file.name}`);
                 
-                // Create file group using script_name from the data
+                // Create script entry using script_name from the data
                 const scriptName = data.script_name || file.name.replace('_lineage.json', '');
-                mergedData.file_groups[scriptName] = {
-                    tables: [],
-                    statements: []
+                mergedData.scripts[scriptName] = {
+                    script_name: scriptName,
+                    tables: data.tables || {},
+                    bteq_statements: data.bteq_statements || []
                 };
-                
-                // Merge tables with file tracking
-                if (data.tables) {
-                    Object.keys(data.tables).forEach(tableName => {
-                        mergedData.tables[tableName] = data.tables[tableName];
-                        // Add script_name to the table object
-                        mergedData.tables[tableName].script_name = scriptName;
-                        mergedData.file_groups[scriptName].tables.push(tableName);
-                    });
-                }
-                
-                // Merge BTEQ statements with file tracking
-                if (data.bteq_statements) {
-                    const startIndex = mergedData.bteq_statements.length;
-                    mergedData.bteq_statements.push(...data.bteq_statements);
-                    
-                    // Track statement indices for this file
-                    for (let i = 0; i < data.bteq_statements.length; i++) {
-                        mergedData.file_groups[scriptName].statements.push(startIndex + i);
-                    }
-                }
                 
                 processedFiles++;
                 folderProgress.textContent = `Processed ${processedFiles} of ${totalFiles} files...`;
                 
                 // When all files are processed, update the display
                 if (processedFiles === totalFiles) {
-                    console.log(`Successfully merged ${totalFiles} files`);
+                    console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
                     lineageData = mergedData;
-                    buildScriptAwareMappings();
+                    buildOwnershipModel();
                     displaySummary();
                     displayTables();
                     displayStatements();
@@ -244,12 +684,8 @@ function loadFolder() {
                     document.getElementById('tabSection').style.display = 'block';
                     initializeTableNames();
                     
-                    // Hide the folder info
-                    folderInfo.style.display = 'none';
-                    
                     // Update URL to include the folder path
                     const url = new URL(window.location);
-                    const folderPath = folderInput.value.split('/').slice(0, -1).join('/');
                     url.searchParams.set('folder', folderPath);
                     window.history.pushState({}, '', url);
                 }
@@ -412,12 +848,13 @@ function loadJsonFromPath(jsonPath) {
                 lineageData.source_file = jsonPath;
             }
             
-            // Create file groups for single file to maintain consistency
+            // Create script structure for single file to maintain consistency
             const fileName = jsonPath.split('/').pop().replace('_lineage.json', '');
-            lineageData.file_groups = {
+            lineageData.scripts = {
                 [fileName]: {
-                    tables: Object.keys(lineageData.tables || {}),
-                    statements: Array.from({length: lineageData.bteq_statements?.length || 0}, (_, i) => i)
+                    script_name: fileName,
+                    tables: lineageData.tables || {},
+                    bteq_statements: lineageData.bteq_statements || []
                 }
             };
             
@@ -441,23 +878,47 @@ function loadJsonFromPath(jsonPath) {
 
 function displaySummary() {
     const summaryGrid = document.getElementById('summaryGrid');
-    const tables = lineageData.tables;
     
-    const totalTables = Object.keys(tables).length;
-    const sourceTables = Object.values(tables).filter(t => t.source.length > 0).length;
-    const targetTables = Object.values(tables).filter(t => t.target.length > 0).length;
-    const volatileTables = Object.values(tables).filter(t => t.is_volatile).length;
-    const totalOperations = lineageData.bteq_statements.length;
+    // Handle both legacy single-file structure and new script-based structure
+    let totalTables = 0;
+    let sourceTables = 0;
+    let targetTables = 0;
+    let volatileTables = 0;
+    let totalOperations = 0;
+    
+    if (lineageData.scripts) {
+        // New script-based structure
+        Object.values(lineageData.scripts).forEach(scriptData => {
+            const tables = scriptData.tables || {};
+            totalTables += Object.keys(tables).length;
+            sourceTables += Object.values(tables).filter(t => t.source && t.source.length > 0).length;
+            targetTables += Object.values(tables).filter(t => t.target && t.target.length > 0).length;
+            volatileTables += Object.values(tables).filter(t => t.is_volatile).length;
+        });
+        
+        // Sum up all operations from all scripts
+        Object.values(lineageData.scripts).forEach(scriptData => {
+            totalOperations += (scriptData.bteq_statements || []).length;
+        });
+    } else {
+        // Legacy single file structure
+        const tables = lineageData.tables || {};
+        totalTables = Object.keys(tables).length;
+        sourceTables = Object.values(tables).filter(t => t.source && t.source.length > 0).length;
+        targetTables = Object.values(tables).filter(t => t.target && t.target.length > 0).length;
+        volatileTables = Object.values(tables).filter(t => t.is_volatile).length;
+        totalOperations = (lineageData.bteq_statements || []).length;
+    }
 
     // Determine script count and display name(s)
     let scriptCount = 1;
     let scriptDisplay = '';
-    if (lineageData.file_groups && Object.keys(lineageData.file_groups).length > 1) {
-        scriptCount = Object.keys(lineageData.file_groups).length;
+    if (lineageData.scripts && Object.keys(lineageData.scripts).length > 1) {
+        scriptCount = Object.keys(lineageData.scripts).length;
         scriptDisplay = '';
-    } else if (lineageData.file_groups && Object.keys(lineageData.file_groups).length === 1) {
+    } else if (lineageData.scripts && Object.keys(lineageData.scripts).length === 1) {
         // Single file mode, show cleaned-up script name
-        let src = Object.keys(lineageData.file_groups)[0];
+        let src = Object.keys(lineageData.scripts)[0];
         // Remove path if present
         src = src.split('/').pop();
         // Remove .json extension
@@ -533,26 +994,25 @@ function displaySummary() {
 function displayTables() {
     const tableList = document.getElementById('tableList');
     
-    // Check if we have file groups (folder mode) or single file
-    if (lineageData.file_groups) {
+    // Check if we have scripts (folder mode) or single file
+    if (lineageData.scripts) {
         // Tree view for multiple files
         tableList.innerHTML = `
             <div class="tree-view">
-                ${Object.keys(lineageData.file_groups).map(fileName => {
-                    const fileGroup = lineageData.file_groups[fileName];
-                    const tables = fileGroup.tables.sort();
-                    const scriptName = fileName;
+                ${Object.keys(lineageData.scripts).map(scriptName => {
+                    const scriptData = lineageData.scripts[scriptName];
+                    const tables = Object.keys(scriptData.tables || {}).sort();
                     
 
                     return `
                         <div class="file-group">
-                            <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-tables')">
+                            <div class="tree-toggle" onclick="toggleFileGroup('${scriptName}-tables')">
                                 <span class="toggle-icon">▶</span>
                                 <span>📄 ${scriptName} (${tables.length})</span>
                             </div>
-                            <div class="tree-children" id="${fileName}-tables">
+                            <div class="tree-children" id="${scriptName}-tables">
                                 ${tables.map(tableName => {
-                                    const table = lineageData.tables[tableName];
+                                    const table = scriptData.tables[tableName];
                                     const isVolatile = table.is_volatile;
                                     const className = `tree-item ${isVolatile ? 'volatile' : ''}`;
                                     
@@ -560,7 +1020,7 @@ function displayTables() {
                                         <div class="${className}" onclick="selectTable('${tableName}')">
                                             <div style="font-weight: bold;">${tableName}</div>
                                             <div style="font-size: 0.8em; color: #6c757d;">
-                                                ${table.source.length} sources, ${table.target.length} targets
+                                                ${(table.source || []).length} sources, ${(table.target || []).length} targets
                                                 ${isVolatile ? ' (volatile)' : ''}
                                             </div>
                                         </div>
@@ -574,7 +1034,7 @@ function displayTables() {
         `;
     } else {
         // Simple list for single file
-        const tables = Object.keys(lineageData.tables).sort();
+        const tables = Object.keys(lineageData.tables || {}).sort();
         
         tableList.innerHTML = tables.map(tableName => {
             const table = lineageData.tables[tableName];
@@ -585,7 +1045,7 @@ function displayTables() {
                 <li class="${className}" onclick="selectTable('${tableName}')">
                     <div style="font-weight: bold;">${tableName}</div>
                     <div style="font-size: 0.8em; color: #6c757d;">
-                        ${table.source.length} sources, ${table.target.length} targets
+                        ${(table.source || []).length} sources, ${(table.target || []).length} targets
                         ${isVolatile ? ' (volatile)' : ''}
                     </div>
                 </li>
@@ -597,44 +1057,43 @@ function displayTables() {
 function displayStatements() {
     const statementList = document.getElementById('statementList');
     
-    // Check if we have file groups (folder mode) or single file
-    if (lineageData.file_groups) {
+    // Check if we have scripts (folder mode) or single file
+    if (lineageData.scripts) {
         // Tree view for multiple files
         statementList.innerHTML = `
             <div class="tree-view">
-                ${Object.keys(lineageData.file_groups).map(fileName => {
-                    const fileGroup = lineageData.file_groups[fileName];
-                    const statements = fileGroup.statements;
+                ${Object.keys(lineageData.scripts).map(scriptName => {
+                    const scriptData = lineageData.scripts[scriptName];
+                    const statements = scriptData.bteq_statements || [];
                     if (statements.length === 0) return '';
 
-                    // Use the file group key (fileName) as the script name and clean it up
-                    let scriptName = fileName;
-                    scriptName = scriptName.split('/').pop();
-                    scriptName = scriptName.replace(/\.json$/i, '');
-                    if (scriptName.match(/_sh_lineage$/i)) {
-                        scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
-                    } else if (scriptName.match(/_ksh_lineage$/i)) {
-                        scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
-                    } else if (scriptName.match(/_sql_lineage$/i)) {
-                        scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
-                    } else if (scriptName.match(/_lineage$/i)) {
-                        scriptName = scriptName.replace(/_lineage$/i, '');
+                    // Use the script name and clean it up
+                    let displayScriptName = scriptName;
+                    displayScriptName = displayScriptName.split('/').pop();
+                    displayScriptName = displayScriptName.replace(/\.json$/i, '');
+                    if (displayScriptName.match(/_sh_lineage$/i)) {
+                        displayScriptName = displayScriptName.replace(/_sh_lineage$/i, '.sh');
+                    } else if (displayScriptName.match(/_ksh_lineage$/i)) {
+                        displayScriptName = displayScriptName.replace(/_ksh_lineage$/i, '.ksh');
+                    } else if (displayScriptName.match(/_sql_lineage$/i)) {
+                        displayScriptName = displayScriptName.replace(/_sql_lineage$/i, '.sql');
+                    } else if (displayScriptName.match(/_lineage$/i)) {
+                        displayScriptName = displayScriptName.replace(/_lineage$/i, '');
                     }
 
                     return `
                         <div class="file-group">
-                            <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-statements')">
+                            <div class="tree-toggle" onclick="toggleFileGroup('${scriptName}-statements')">
                                 <span class="toggle-icon">▶</span>
-                                <span>📄 ${scriptName} (${statements.length})</span>
+                                <span>📄 ${displayScriptName} (${statements.length})</span>
                             </div>
-                            <div class="tree-children" id="${fileName}-statements">
-                                ${statements.map((globalIndex, localIndex) => {
-                                    const statement = lineageData.bteq_statements[globalIndex];
+                            <div class="tree-children" id="${scriptName}-statements">
+                                ${statements.map((statement, localIndex) => {
                                     const firstLine = statement.split('\n')[0].trim();
                                     const displayText = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
                                     return `
-                                        <div class="tree-item" onclick="selectStatementByScript('${fileName}', ${localIndex})">
-                                            <div style="font-weight: bold;">Statement ${scriptName}:${localIndex}</div>
+                                        <div class="tree-item" onclick="selectStatementByScript('${scriptName}', ${localIndex})">
+                                            <div style="font-weight: bold;">Statement ${displayScriptName}:${localIndex}</div>
                                             <div style="font-size: 0.8em; color: #6c757d;">
                                                 ${displayText}
                                             </div>
@@ -649,24 +1108,26 @@ function displayStatements() {
         `;
     } else {
         // Simple list for single file
-        const statements = lineageData.bteq_statements;
-        let scriptName = Object.keys(lineageData.file_groups)[0];
-        scriptName = scriptName.split('/').pop();
-        scriptName = scriptName.replace(/\.json$/i, '');
-        if (scriptName.match(/_sh_lineage$/i)) {
-            scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
-        } else if (scriptName.match(/_ksh_lineage$/i)) {
-            scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
-        } else if (scriptName.match(/_sql_lineage$/i)) {
-            scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
-        } else if (scriptName.match(/_lineage$/i)) {
-            scriptName = scriptName.replace(/_lineage$/i, '');
+        const statements = lineageData.bteq_statements || [];
+        let scriptName = 'Unknown';
+        if (lineageData.source_file) {
+            scriptName = lineageData.source_file.split('/').pop();
+            scriptName = scriptName.replace(/\.json$/i, '');
+            if (scriptName.match(/_sh_lineage$/i)) {
+                scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
+            } else if (scriptName.match(/_ksh_lineage$/i)) {
+                scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
+            } else if (scriptName.match(/_sql_lineage$/i)) {
+                scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
+            } else if (scriptName.match(/_lineage$/i)) {
+                scriptName = scriptName.replace(/_lineage$/i, '');
+            }
         }
         statementList.innerHTML = statements.map((statement, index) => {
             const firstLine = statement.split('\n')[0].trim();
             const displayText = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
             return `
-                <li class="statement-item" onclick="selectStatementByScript('${Object.keys(lineageData.file_groups)[0]}', ${index})">
+                <li class="statement-item" onclick="selectStatement(${index})">
                     <div style="font-weight: bold;">${scriptName}:${index}</div>
                     <div style="font-size: 0.8em; color: #6c757d;">
                         ${displayText}
@@ -694,13 +1155,12 @@ function selectStatementByScript(scriptKey, localIndex) {
 // New function to display statement details by script and local index
 function displayStatementDetailsByScript(scriptKey, localIndex) {
     const contentArea = document.getElementById('statementContentArea');
-    const fileGroup = lineageData.file_groups[scriptKey];
-    if (!fileGroup) {
+    const scriptData = lineageData.scripts[scriptKey];
+    if (!scriptData) {
         contentArea.innerHTML = `<div class="error">Script not found.</div>`;
         return;
     }
-    const globalIndex = fileGroup.statements[localIndex];
-    const statement = lineageData.bteq_statements[globalIndex];
+    const statement = (scriptData.bteq_statements || [])[localIndex];
     // Clean up script name for display
     let scriptName = scriptKey.split('/').pop();
     scriptName = scriptName.replace(/\.json$/i, '');
@@ -731,44 +1191,44 @@ ${statement}
 function displayNetworkFileGroups() {
     const networkFileGroups = document.getElementById('networkFileGroups');
     
-    if (!lineageData.file_groups) {
+    if (!lineageData.scripts) {
         networkFileGroups.innerHTML = '<p style="color: #6c757d; font-size: 0.9em;">Single file mode - use "All Tables Network"</p>';
         return;
     }
     
     networkFileGroups.innerHTML = `
         <div class="tree-view">
-            ${Object.keys(lineageData.file_groups).map(fileName => {
-                const fileGroup = lineageData.file_groups[fileName];
-                const tables = fileGroup.tables;
+            ${Object.keys(lineageData.scripts).map(scriptName => {
+                const scriptData = lineageData.scripts[scriptName];
+                const tables = Object.keys(scriptData.tables || {});
                 if (tables.length === 0) return '';
 
-                // Use the file group key (fileName) as the script name and clean it up
-                let scriptName = fileName;
+                // Use the script name and clean it up
+                let displayScriptName = scriptName;
                 // Remove path if present
-                scriptName = scriptName.split('/').pop();
+                displayScriptName = displayScriptName.split('/').pop();
                 // Remove .json extension if present
-                scriptName = scriptName.replace(/\.json$/i, '');
+                displayScriptName = displayScriptName.replace(/\.json$/i, '');
                 // Convert *_sh_lineage or *_ksh_lineage to .sh/.ksh
-                if (scriptName.match(/_sh_lineage$/i)) {
-                    scriptName = scriptName.replace(/_sh_lineage$/i, '.sh');
-                } else if (scriptName.match(/_ksh_lineage$/i)) {
-                    scriptName = scriptName.replace(/_ksh_lineage$/i, '.ksh');
-                } else if (scriptName.match(/_sql_lineage$/i)) {
-                    scriptName = scriptName.replace(/_sql_lineage$/i, '.sql');
-                } else if (scriptName.match(/_lineage$/i)) {
-                    scriptName = scriptName.replace(/_lineage$/i, '');
+                if (displayScriptName.match(/_sh_lineage$/i)) {
+                    displayScriptName = displayScriptName.replace(/_sh_lineage$/i, '.sh');
+                } else if (displayScriptName.match(/_ksh_lineage$/i)) {
+                    displayScriptName = displayScriptName.replace(/_ksh_lineage$/i, '.ksh');
+                } else if (displayScriptName.match(/_sql_lineage$/i)) {
+                    displayScriptName = displayScriptName.replace(/_sql_lineage$/i, '.sql');
+                } else if (displayScriptName.match(/_lineage$/i)) {
+                    displayScriptName = displayScriptName.replace(/_lineage$/i, '');
                 }
 
                 return `
                     <div class="file-group">
-                        <div class="tree-toggle" onclick="toggleFileGroup('${fileName}-network')">
+                        <div class="tree-toggle" onclick="toggleFileGroup('${scriptName}-network')">
                             <span class="toggle-icon">▶</span>
-                            <span style="cursor:pointer;" onclick="event.stopPropagation(); showFileNetwork('${fileName}')">📄 ${scriptName} (${tables.length})</span>
+                            <span style="cursor:pointer;" onclick="event.stopPropagation(); showFileNetwork('${scriptName}')">📄 ${displayScriptName} (${tables.length})</span>
                         </div>
-                        <div class="tree-children" id="${fileName}-network">
+                        <div class="tree-children" id="${scriptName}-network">
                             ${tables.map(tableName => {
-                                const table = lineageData.tables[tableName];
+                                const table = scriptData.tables[tableName];
                                 const isVolatile = table.is_volatile;
                                 const className = `tree-item ${isVolatile ? 'volatile' : ''}`;
                                 
@@ -776,7 +1236,7 @@ function displayNetworkFileGroups() {
                                     <div class="${className}" onclick="showTableNetwork('${tableName}')">
                                         <div style="font-weight: bold;">${tableName}</div>
                                         <div style="font-size: 0.8em; color: #6c757d;">
-                                            ${table.source.length} sources, ${table.target.length} targets
+                                            ${(table.source || []).length} sources, ${(table.target || []).length} targets
                                             ${isVolatile ? ' (volatile)' : ''}
                                         </div>
                                     </div>
@@ -873,38 +1333,83 @@ function toggleFileGroup(groupId) {
 
 function displayStatementDetails(statementIndex) {
     const contentArea = document.getElementById('statementContentArea');
-    const statement = lineageData.bteq_statements[statementIndex];
-    const statementInfo = getStatementInfo(statementIndex);
     
-    contentArea.innerHTML = `
-        <div class="table-details">
-            <div class="table-header">
-                <div class="table-name">SQL Statement ${statementInfo.displayText}</div>
-            </div>
-            
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 20px;">
-                <h4 style="margin-bottom: 15px; color: #495057;">Formatted SQL:</h4>
-                <div style="background: white; padding: 20px; border-radius: 8px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 14px; line-height: 1.5; max-height: 500px; overflow-y: auto; border: 1px solid #dee2e6;">
+    // Handle legacy single file mode
+    if (!lineageData.scripts) {
+        const statement = (lineageData.bteq_statements || [])[statementIndex];
+        const scriptName = lineageData.source_file ? lineageData.source_file.replace('_lineage.json', '') : 'Unknown';
+        
+        contentArea.innerHTML = `
+            <div class="table-details">
+                <div class="table-header">
+                    <div class="table-name">SQL Statement ${scriptName}:${statementIndex}</div>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 20px;">
+                    <h4 style="margin-bottom: 15px; color: #495057;">Formatted SQL:</h4>
+                    <div style="background: white; padding: 20px; border-radius: 8px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 14px; line-height: 1.5; max-height: 500px; overflow-y: auto; border: 1px solid #dee2e6;">
 ${statement}
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    } else {
+        // For script-based mode, redirect to the appropriate script function
+        // Find which script contains this statement
+        let foundScript = null;
+        let localIndex = statementIndex;
+        
+        for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+            if (scriptData.bteq_statements && localIndex < scriptData.bteq_statements.length) {
+                foundScript = scriptName;
+                break;
+            }
+            localIndex -= scriptData.bteq_statements ? scriptData.bteq_statements.length : 0;
+        }
+        
+        if (foundScript) {
+            displayStatementDetailsByScript(foundScript, localIndex);
+        } else {
+            contentArea.innerHTML = `
+                <div class="error">
+                    <strong>Error:</strong> Statement not found
+                </div>
+            `;
+        }
+    }
 }
 
 function displayTableDetails(tableName) {
     const contentArea = document.getElementById('contentArea');
-    const table = lineageData.tables[tableName];
     
-    const sourceRelationships = table.source.map(rel => `
+    // Find the table in any script
+    let table = null;
+    let scriptName = null;
+    if (lineageData.scripts) {
+        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+            if (sData.tables[tableName]) {
+                table = sData.tables[tableName];
+                scriptName = sName;
+                break;
+            }
+        }
+    } else {
+        // Fallback for legacy single file mode
+        table = lineageData.tables[tableName];
+    }
+    
+    // Use script name if available, otherwise use a fallback
+    const operationScriptName = scriptName || 'Unknown';
+    
+    const sourceRelationships = (table.source || []).map(rel => `
         <div class="relationship-item">
             <div class="table-name">${rel.name}</div>
             <div class="operations">
                 Operations: 
                 <div class="operation-list">
-                    ${rel.operation.map(opIndex => `
-                        <span class="operation-badge" onclick="showSql(${opIndex})">
-                            ${opIndex}
+                    ${(rel.operation || []).map(opIndex => `
+                        <span class="operation-badge" onclick="showSql('${operationScriptName}::op${opIndex}')">
+                            ${operationScriptName}:${opIndex}
                         </span>
                     `).join('')}
                 </div>
@@ -912,15 +1417,15 @@ function displayTableDetails(tableName) {
         </div>
     `).join('');
 
-    const targetRelationships = table.target.map(rel => `
+    const targetRelationships = (table.target || []).map(rel => `
         <div class="relationship-item">
             <div class="table-name">${rel.name}</div>
             <div class="operations">
                 Operations: 
                 <div class="operation-list">
-                    ${rel.operation.map(opIndex => `
-                        <span class="operation-badge" onclick="showSql(${opIndex})">
-                            ${opIndex}
+                    ${(rel.operation || []).map(opIndex => `
+                        <span class="operation-badge" onclick="showSql('${operationScriptName}::op${opIndex}')">
+                            ${operationScriptName}:${opIndex}
                         </span>
                     `).join('')}
                 </div>
@@ -937,27 +1442,65 @@ function displayTableDetails(tableName) {
             
             <div class="relationships">
                 <div class="relationship-section">
-                    <h4>📥 Source Tables (${table.source.length})</h4>
-                    ${table.source.length > 0 ? sourceRelationships : '<p style="color: #6c757d;">No source tables</p>'}
+                    <h4>📥 Source Tables (${(table.source || []).length})</h4>
+                    ${(table.source || []).length > 0 ? sourceRelationships : '<p style="color: #6c757d;">No source tables</p>'}
                 </div>
                 
                 <div class="relationship-section">
-                    <h4>📤 Target Tables (${table.target.length})</h4>
-                    ${table.target.length > 0 ? targetRelationships : '<p style="color: #6c757d;">No target tables</p>'}
+                    <h4>📤 Target Tables (${(table.target || []).length})</h4>
+                    ${(table.target || []).length > 0 ? targetRelationships : '<p style="color: #6c757d;">No target tables</p>'}
                 </div>
             </div>
         </div>
     `;
 }
 
-function showSql(operationIndex) {
+// Helper function to parse operation in new format (e.g., "CAMSTAR_LOT_BONUS.sh::op4")
+function parseOperation(operationString) {
+    if (typeof operationString !== 'string' || !operationString.includes('::')) {
+        console.error('Invalid operation format:', operationString);
+        throw new Error(`Invalid operation format: ${operationString}. Expected format: "scriptName::opIndex"`);
+    }
+    
+    const [scriptName, opId] = operationString.split('::');
+    const opIndex = parseInt(opId.replace('op', ''), 10);
+    
+    if (isNaN(opIndex)) {
+        console.error('Invalid operation index:', opId);
+        throw new Error(`Invalid operation index: ${opId}`);
+    }
+    
+    return {
+        scriptName: scriptName,
+        localIndex: opIndex,
+        displayText: `${scriptName}:${opIndex}`,
+        operationKey: operationString
+    };
+}
+
+function showSql(operationString) {
     const modal = document.getElementById('sqlModal');
     const modalTitle = document.getElementById('modalTitle');
     const sqlContent = document.getElementById('sqlContent');
-    const statementInfo = getStatementInfo(operationIndex);
     
-    modalTitle.textContent = `SQL Statement ${statementInfo.displayText}`;
-    sqlContent.textContent = lineageData.bteq_statements[operationIndex];
+    // Parse the operation string to get script and index
+    const operationInfo = parseOperation(operationString);
+    
+    modalTitle.textContent = `SQL Statement ${operationInfo.displayText}`;
+    
+    // Get the SQL statement from the appropriate script
+    let sqlStatement = null;
+    if (lineageData.scripts && lineageData.scripts[operationInfo.scriptName]) {
+        const scriptData = lineageData.scripts[operationInfo.scriptName];
+        if (scriptData.bteq_statements && scriptData.bteq_statements.length > operationInfo.localIndex) {
+            sqlStatement = scriptData.bteq_statements[operationInfo.localIndex];
+        }
+    } else if (!lineageData.scripts && lineageData.bteq_statements) {
+        // Legacy single file mode
+        sqlStatement = lineageData.bteq_statements[operationInfo.localIndex];
+    }
+    
+    sqlContent.textContent = sqlStatement || 'Statement not found';
     modal.style.display = 'block';
 }
 
@@ -994,7 +1537,11 @@ function switchTab(tabName) {
         document.getElementById('networkTab').classList.add('active');
         if (lineageData && !network) {
             setTimeout(() => {
-                createNetworkVisualization();
+                // Ensure ownership model is built
+                if (Object.keys(allNodes).length === 0) {
+                    buildOwnershipModel();
+                }
+                createNetworkVisualization([], []);
             }, 100);
         }
     }
@@ -1013,90 +1560,64 @@ function getNodeColor(table) {
     }
 }
 
-function createNetworkVisualization() {
+function createNetworkVisualization(scriptFilters = [], tableFilters = []) {
     const container = document.getElementById('networkContainer');
     
-    // Create nodes (tables)
-    const nodes = [];
-    const nodeIds = new Set();
+    // Apply filters to get filtered data
+    const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters);
     
-    // Add all tables as nodes
-    Object.keys(lineageData.tables).forEach(tableName => {
-        const table = lineageData.tables[tableName];
-        nodeIds.add(tableName);
+    // Create vis.js nodes
+    const visNodes = filteredNodes.map(node => {
+        const nodeColor = getNodeColor(node);
+        const nodeSize = 20 + Math.min((node.source?.length || 0) + (node.target?.length || 0), 10) * 2;
         
-        const node = {
-            id: tableName,
-            label: tableName,
-            title: `${tableName}\nSources: ${table.source.length}\nTargets: ${table.target.length}\nVolatile: ${table.is_volatile ? 'Yes' : 'No'}`,
-            color: getNodeColor(table),
-            size: 20 + Math.min(table.source.length + table.target.length, 10) * 2,
+        return {
+            id: node.id,
+            label: node.name,
+            title: `${node.name}\nSources: ${node.source.length}\nTargets: ${node.target.length}\nVolatile: ${node.is_volatile ? 'Yes' : 'No'}\nOwners: ${node.owners.join(', ')}`,
+            color: nodeColor,
+            size: nodeSize,
             font: {
                 size: 12,
                 face: 'Arial'
             }
         };
-        nodes.push(node);
     });
     
-    // Create edges (relationships)
-    const edges = [];
-    const edgeMap = new Map(); // To avoid duplicate edges
-    
-    Object.keys(lineageData.tables).forEach(tableName => {
-        const table = lineageData.tables[tableName];
+    // Create vis.js edges
+    const visEdges = filteredEdges.map(([from, to, operations]) => {
+        // Create operation display text using the new format
+        const operationTexts = getOperationDisplayText(operations);
         
-        // Add source relationships
-        table.source.forEach(sourceRel => {
-            const edgeKey = `${sourceRel.name}->${tableName}`;
-            if (!edgeMap.has(edgeKey)) {
-                edgeMap.set(edgeKey, true);
-                
-                const operations = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: sourceRel.operation }]);
-                edges.push({
-                    from: sourceRel.name,
-                    to: tableName,
-                    arrows: 'to',
-                    color: { color: '#28a745', opacity: 0.8 },
-                    width: 2,
-                    title: `Operations: ${operations}`,
-                    label: operations,
-                    font: {
-                        size: 10,
-                        color: '#28a745'
-                    }
-                });
+        return {
+            from: from,
+            to: to,
+            arrows: 'to',
+            color: { color: '#28a745', opacity: 0.8 },
+            width: 2,
+            title: `Operations: ${operationTexts}`,
+            label: operationTexts,
+            font: {
+                size: 10,
+                color: '#28a745'
             }
-        });
-        
-        // Add target relationships
-        table.target.forEach(targetRel => {
-            const edgeKey = `${tableName}->${targetRel.name}`;
-            if (!edgeMap.has(edgeKey)) {
-                edgeMap.set(edgeKey, true);
-                
-                const operations = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: targetRel.operation }]);
-                edges.push({
-                    from: tableName,
-                    to: targetRel.name,
-                    arrows: 'to',
-                    color: { color: '#dc3545', opacity: 0.8 },
-                    width: 2,
-                    title: `Operations: ${operations}`,
-                    label: operations,
-                    font: {
-                        size: 10,
-                        color: '#dc3545'
-                    }
-                });
-            }
-        });
+        };
     });
+    
+    // Debug: Print nodes used in the network
+    console.log('=== Network Re-render Debug ===');
+    console.log('Function: createNetworkVisualization');
+    console.log('Script filters:', scriptFilters);
+    console.log('Table filters:', tableFilters);
+    console.log('Total nodes:', visNodes.length);
+    console.log('Nodes:', visNodes.map(n => n.id).sort());
+    console.log('Total edges:', visEdges.length);
+    console.log('================================');
     
     // Create the network
     const data = {
-        nodes: new vis.DataSet(nodes),
-        edges: new vis.DataSet(edges)
+        nodes: new vis.DataSet(visNodes),
+        edges: new vis.DataSet(visEdges)
     };
     
     const options = {
@@ -1124,6 +1645,10 @@ function createNetworkVisualization() {
             improvedLayout: true
         }
     };
+    
+    if (network) {
+        network.destroy();
+    }
     
     network = new vis.Network(container, data, options);
     
@@ -1163,10 +1688,8 @@ function loadAllLineageFiles() {
             
             // Initialize merged data structure
             const mergedData = {
-                tables: {},
-                bteq_statements: [],
-                source_file: `${jsonFiles.length}`,
-                file_groups: {}
+                scripts: {},
+                source_file: `${jsonFiles.length}`
             };
             
             let processedFiles = 0;
@@ -1185,48 +1708,28 @@ function loadAllLineageFiles() {
                     .then(data => {
                         console.log(`Processing file: ${jsonFile}`);
                         
-                        // Create file group using script_name from the data
+                        // Create script entry using script_name from the data
                         const scriptName = data.script_name || jsonFile.replace('_lineage.json', '');
-                        mergedData.file_groups[scriptName] = {
-                            tables: [],
-                            statements: []
+                        mergedData.scripts[scriptName] = {
+                            script_name: scriptName,
+                            tables: data.tables || {},
+                            bteq_statements: data.bteq_statements || []
                         };
-                        
-                        // Merge tables with file tracking
-                        if (data.tables) {
-                            Object.keys(data.tables).forEach(tableName => {
-                                mergedData.tables[tableName] = data.tables[tableName];
-                                // Add script_name to the table object
-                                mergedData.tables[tableName].script_name = scriptName;
-                                mergedData.file_groups[scriptName].tables.push(tableName);
-                            });
-                        }
-                        
-                        // Merge BTEQ statements with file tracking
-                        if (data.bteq_statements) {
-                            const startIndex = mergedData.bteq_statements.length;
-                            mergedData.bteq_statements.push(...data.bteq_statements);
-                            
-                            // Track statement indices for this file
-                            for (let i = 0; i < data.bteq_statements.length; i++) {
-                                mergedData.file_groups[scriptName].statements.push(startIndex + i);
-                            }
-                        }
                         
                         processedFiles++;
                         
                         // When all files are processed, update the display
                         if (processedFiles === totalFiles) {
-                                                        console.log(`Successfully merged ${totalFiles} files`);
-                    lineageData = mergedData;
-                    buildScriptAwareMappings();
-                    displaySummary();
-                    displayTables();
-                    displayStatements();
-                    displayNetworkFileGroups();
-                    document.getElementById('summarySection').style.display = 'block';
-                    document.getElementById('tabSection').style.display = 'block';
-                    initializeTableNames();
+                            console.log(`Successfully merged ${totalFiles} files`);
+                            lineageData = mergedData;
+                            buildOwnershipModel();
+                            displaySummary();
+                            displayTables();
+                            displayStatements();
+                            displayNetworkFileGroups();
+                            document.getElementById('summarySection').style.display = 'block';
+                            document.getElementById('tabSection').style.display = 'block';
+                            initializeTableNames();
                         }
                     })
                     .catch(error => {
@@ -1244,330 +1747,27 @@ function loadAllLineageFiles() {
         });
 }
 
-function highlightConnectedNodes(nodeId) {
-    const connectedNodes = new Set();
-    const connectedEdges = new Set();
-    
-    // Find all connected nodes and edges
-    lineageData.tables[nodeId].source.forEach(sourceRel => {
-        connectedNodes.add(sourceRel.name);
-    });
-    
-    lineageData.tables[nodeId].target.forEach(targetRel => {
-        connectedNodes.add(targetRel.name);
-    });
-    
-    // Highlight the selected node and its connections
-    network.selectNodes([nodeId]);
-    
-    // You can add more highlighting logic here if needed
-}
 
-function showMultipleTables(tableNames) {
-    console.log('showMultipleTables called with:', tableNames);
-    const container = document.getElementById('networkContainer');
-    
-    // Get all related tables for the selected tables
-    const relatedTables = new Set();
-    
-    tableNames.forEach(tableName => {
-        if (lineageData.tables[tableName]) {
-            relatedTables.add(tableName);
-            const table = lineageData.tables[tableName];
-            
-            // Add source tables (tables that provide data to this table)
-            table.source.forEach(sourceRel => {
-                relatedTables.add(sourceRel.name);
-            });
-            
-            // Add target tables (tables that receive data from this table)
-            table.target.forEach(targetRel => {
-                relatedTables.add(targetRel.name);
-            });
-        }
-    });
-    
-    // Create nodes for related tables only
-    const nodes = [];
-    const edges = [];
-    const edgeMap = new Map();
-    
-    relatedTables.forEach(tableName => {
-        if (lineageData.tables[tableName]) {
-            const tableData = lineageData.tables[tableName];
-            const isSelected = tableNames.includes(tableName);
-            
-            const node = {
-                id: tableName,
-                label: tableName,
-                title: `${tableName}\nSources: ${tableData.source.length}\nTargets: ${tableData.target.length}\nVolatile: ${tableData.is_volatile ? 'Yes' : 'No'}`,
-                color: isSelected ? '#007bff' : getNodeColor(tableData),
-                size: isSelected ? 30 : (20 + Math.min(tableData.source.length + tableData.target.length, 10) * 2),
-                font: {
-                    size: isSelected ? 16 : 12,
-                    face: 'Arial',
-                    bold: isSelected
-                },
-                borderWidth: isSelected ? 3 : 2
-            };
-            nodes.push(node);
-            
-            // Add edges only between related tables
-            tableData.source.forEach(sourceRel => {
-                if (relatedTables.has(sourceRel.name)) {
-                    const edgeKey = `${sourceRel.name}->${tableName}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        
-                        const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: sourceRel.operation }]);
-                        edges.push({
-                            from: sourceRel.name,
-                            to: tableName,
-                            arrows: 'to',
-                            color: { color: '#28a745', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${operations}`,
-                            label: operations,
-                            font: {
-                                size: 10,
-                                color: '#28a745'
-                            }
-                        });
-                    }
-                }
-            });
-            
-            tableData.target.forEach(targetRel => {
-                if (relatedTables.has(targetRel.name)) {
-                    const edgeKey = `${tableName}->${targetRel.name}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        
-                        const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: targetRel.operation }]);
-                        edges.push({
-                            from: tableName,
-                            to: targetRel.name,
-                            arrows: 'to',
-                            color: { color: '#dc3545', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${operations}`,
-                            label: operations,
-                            font: {
-                                size: 10,
-                                color: '#dc3545'
-                            }
-                        });
-                    }
-                }
-            });
-        }
-    });
-    
-    // Update the network with filtered data
-    const data = {
-        nodes: new vis.DataSet(nodes),
-        edges: new vis.DataSet(edges)
-    };
-    
-    const options = {
-        nodes: {
-            shape: 'box',
-            borderWidth: 2,
-            shadow: true
-        },
-        edges: {
-            smooth: {
-                type: 'curvedCW',
-                roundness: 0.2
-            }
-        },
-        physics: {
-            enabled: false
-        },
-        interaction: {
-            hover: true,
-            tooltipDelay: 200,
-            zoomView: true,
-            dragView: true
-        },
-        layout: {
-            improvedLayout: true
-        }
-    };
-    
-    if (network) {
-        network.destroy();
-    }
-    
-    network = new vis.Network(container, data, options);
-    
-    // Add click events for the filtered network
-    network.on('click', function(params) {
-        if (params.nodes.length > 0) {
-            // Node clicked - apply filter to show this table and its relationships
-            const clickedNodeId = params.nodes[0];
-            showDirectlyRelatedNodes(clickedNodeId);
-            hideSidePanel();
-        } else if (params.edges.length > 0) {
-            // Edge clicked
-            showEdgeDetails(params.edges[0]);
-        } else {
-            hideSidePanel();
-        }
-    });
-}
+
+
 
 function showDirectlyRelatedNodes(nodeId) {
-    const container = document.getElementById('networkContainer');
-    const table = lineageData.tables[nodeId];
-    
-    // Get directly related tables
-    const relatedTables = new Set([nodeId]);
-    
-    // Add source tables (tables that provide data to this table)
-    table.source.forEach(sourceRel => {
-        relatedTables.add(sourceRel.name);
-    });
-    
-    // Add target tables (tables that receive data from this table)
-    table.target.forEach(targetRel => {
-        relatedTables.add(targetRel.name);
-    });
-    
-    // Create nodes for related tables only
-    const nodes = [];
-    const edges = [];
-    const edgeMap = new Map();
-    
-    relatedTables.forEach(tableName => {
-        if (lineageData.tables[tableName]) {
-            const tableData = lineageData.tables[tableName];
-            const isSelected = tableName === nodeId;
-            
-            const node = {
-                id: tableName,
-                label: tableName,
-                title: `${tableName}\nSources: ${tableData.source.length}\nTargets: ${tableData.target.length}\nVolatile: ${tableData.is_volatile ? 'Yes' : 'No'}`,
-                color: isSelected ? '#007bff' : getNodeColor(tableData),
-                size: isSelected ? 30 : (20 + Math.min(tableData.source.length + tableData.target.length, 10) * 2),
-                font: {
-                    size: isSelected ? 16 : 12,
-                    face: 'Arial',
-                    bold: isSelected
-                },
-                borderWidth: isSelected ? 3 : 2
-            };
-            nodes.push(node);
-            
-            // Add edges only between related tables
-            tableData.source.forEach(sourceRel => {
-                if (relatedTables.has(sourceRel.name)) {
-                    const edgeKey = `${sourceRel.name}->${tableName}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        
-                        const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: sourceRel.operation }]);
-                        edges.push({
-                            from: sourceRel.name,
-                            to: tableName,
-                            arrows: 'to',
-                            color: { color: '#28a745', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${operations}`,
-                            label: operations,
-                            font: {
-                                size: 10,
-                                color: '#28a745'
-                            }
-                        });
-                    }
-                }
-            });
-            
-            tableData.target.forEach(targetRel => {
-                if (relatedTables.has(targetRel.name)) {
-                    const edgeKey = `${tableName}->${targetRel.name}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        
-                        const operations = getOperationDisplayText([{ scriptName: tableData.script_name || 'Unknown', indices: targetRel.operation }]);
-                        edges.push({
-                            from: tableName,
-                            to: targetRel.name,
-                            arrows: 'to',
-                            color: { color: '#dc3545', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${operations}`,
-                            label: operations,
-                            font: {
-                                size: 10,
-                                color: '#dc3545'
-                            }
-                        });
-                    }
-                }
-            });
-        }
-    });
-    
-    // Update the network with filtered data
-    const data = {
-        nodes: new vis.DataSet(nodes),
-        edges: new vis.DataSet(edges)
-    };
-    
-    const options = {
-        nodes: {
-            shape: 'box',
-            borderWidth: 2,
-            shadow: true
-        },
-        edges: {
-            smooth: {
-                type: 'curvedCW',
-                roundness: 0.2
-            }
-        },
-        physics: {
-            enabled: false
-        },
-        interaction: {
-            hover: true,
-            tooltipDelay: 200,
-            zoomView: true,
-            dragView: true
-        },
-        layout: {
-            improvedLayout: true
-        }
-    };
-    
-    if (network) {
-        network.destroy();
+    // Find the node in our ownership model
+    const node = allNodes[nodeId];
+    if (!node) {
+        console.error('Node not found in ownership model:', nodeId);
+        return;
     }
     
-    network = new vis.Network(container, data, options);
+    // Update table filters to show this specific table
+    selectedTableFilters = [node.name];
+    updateSelectedScriptLabel();
     
-    // Add click events for the filtered network
-    network.on('click', function(params) {
-        if (params.nodes.length > 0) {
-            // Node clicked - apply filter to show this table and its relationships
-            const clickedNodeId = params.nodes[0];
-            showDirectlyRelatedNodes(clickedNodeId);
-            hideSidePanel();
-        } else if (params.edges.length > 0) {
-            // Edge clicked
-            showEdgeDetails(params.edges[0]);
-        } else {
-            hideSidePanel();
-        }
-    });
+    // Use createNetworkVisualization with table filter to show related tables
+    createNetworkVisualization(selectedNetworkScript ? [selectedNetworkScript] : [], [node.name]);
 }
 
-function showAllNodes() {
-    // Recreate the full network visualization
-    createNetworkVisualization();
-}
+
 
 function showEdgeDetails(edgeId) {
     const sidePanel = document.getElementById('networkSidePanel');
@@ -1608,35 +1808,36 @@ function showEdgeDetails(edgeId) {
     `;
     // Add each SQL statement
     opGroups.forEach(group => {
-        let fileGroup = null;
-        if (lineageData.file_groups && lineageData.file_groups[group.scriptName]) {
-            fileGroup = lineageData.file_groups[group.scriptName];
-        } else if (lineageData.file_groups) {
+        let scriptData = null;
+        if (lineageData.scripts && lineageData.scripts[group.scriptName]) {
+            scriptData = lineageData.scripts[group.scriptName];
+        } else if (lineageData.scripts) {
             // Try to find by normalized script name
-            for (const [key, fg] of Object.entries(lineageData.file_groups)) {
+            for (const [key, sData] of Object.entries(lineageData.scripts)) {
                 let normKey = key.split('/').pop().replace(/\.json$/i, '');
                 if (normKey.match(/_sh_lineage$/i)) normKey = normKey.replace(/_sh_lineage$/i, '.sh');
                 else if (normKey.match(/_ksh_lineage$/i)) normKey = normKey.replace(/_ksh_lineage$/i, '.ksh');
                 else if (normKey.match(/_sql_lineage$/i)) normKey = normKey.replace(/_sql_lineage$/i, '.sql');
                 else if (normKey.match(/_lineage$/i)) normKey = normKey.replace(/_lineage$/i, '');
                 if (normKey === group.scriptName) {
-                    fileGroup = fg;
+                    scriptData = sData;
                     break;
                 }
             }
         }
         group.indices.forEach(localIdx => {
-            let globalIndex = null;
-            if (fileGroup && fileGroup.statements && fileGroup.statements.length > localIdx) {
-                globalIndex = fileGroup.statements[localIdx];
-            } else if (!lineageData.file_groups && lineageData.bteq_statements.length > localIdx) {
-                globalIndex = localIdx;
+            let sqlStatement = null;
+            if (scriptData && scriptData.bteq_statements && scriptData.bteq_statements.length > localIdx) {
+                sqlStatement = scriptData.bteq_statements[localIdx];
+            } else if (!lineageData.scripts && lineageData.bteq_statements && lineageData.bteq_statements.length > localIdx) {
+                sqlStatement = lineageData.bteq_statements[localIdx];
             }
-            if (globalIndex !== null && !isNaN(globalIndex)) {
-                const sqlStatement = lineageData.bteq_statements[globalIndex];
+            if (sqlStatement) {
+                // Create operation string in new format for clickable link
+                const operationString = `${group.scriptName}::op${localIdx}`;
                 content += `
                     <div style=\"background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;\">
-                        <h5 style=\"color: #007bff; margin-bottom: 10px;\">${group.scriptName}:${localIdx}</h5>
+                        <h5 style=\"color: #007bff; margin-bottom: 10px; cursor: pointer;\" onclick=\"showSql('${operationString}')\">${group.scriptName}:${localIdx}</h5>
                         <div style=\"background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.4; max-height: 200px; overflow-y: auto; border: 1px solid #e9ecef;\">
 ${sqlStatement}
                         </div>
@@ -1652,149 +1853,55 @@ ${sqlStatement}
 
 function showAllTablesNetwork() {
     selectedNetworkScript = null;
+    selectedTableFilters = [];
     updateSelectedScriptLabel();
-    createNetworkVisualization();
+    // Show all nodes without any filters
+    createNetworkVisualization([], []);
 }
 
 function showTableNetwork(tableName) {
-    // Show the selected table along with its directly related tables (sources and targets)
-    showDirectlyRelatedNodes(tableName);
+    // Find the node ID for this table name in our ownership model
+    let nodeId = null;
+    
+    // First, try to find it as a global table
+    if (allNodes[tableName]) {
+        nodeId = tableName;
+    } else {
+        // If not found as global, try to find it as a volatile table in any script
+        for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
+            if (scriptData.tables && scriptData.tables[tableName]) {
+                const table = scriptData.tables[tableName];
+                if (table.is_volatile) {
+                    nodeId = `${scriptName}::${tableName}`;
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (nodeId && allNodes[nodeId]) {
+        // Show the selected table along with its directly related tables (sources and targets)
+        showDirectlyRelatedNodes(nodeId);
+    } else {
+        console.error('Table not found in ownership model:', tableName);
+        // Fallback: show all tables
+        selectedTableFilters = [];
+        createNetworkVisualization([], []);
+        updateSelectedScriptLabel();
+    }
 }
 
 function showFileNetwork(fileName) {
+    console.log('Network script selected:', fileName);
     selectedNetworkScript = fileName;
+    selectedTableFilters = [];
     updateSelectedScriptLabel();
-    if (!lineageData.file_groups || !lineageData.file_groups[fileName]) {
-        return;
-    }
-    const tables = lineageData.file_groups[fileName].tables;
-    const tablePairs = tables.map(tableName => {
-        const table = lineageData.tables[tableName];
-        const scriptName = table.script_name || 'Unknown';
-        return [scriptName, tableName];
-    });
-    createFilteredNetworkVisualization(tablePairs);
+    
+    // Use the new filtering system
+    createNetworkVisualization([fileName], []);
 }
 
-function createFilteredNetworkVisualization(selectedTablePairs) {
-    // selectedTablePairs: array of [script_name, table_name]
-    const container = document.getElementById('networkContainer');
-    // Deduplicate by script_name + table_name
-    const uniqueTableKeys = new Set(selectedTablePairs.map(pair => pair[0] + '::' + pair[1]));
-    // Create nodes
-    const nodes = [];
-    uniqueTableKeys.forEach(key => {
-        const table = tableKeyMap[key];
-        if (table) {
-            const tableName = key.split('::')[1];
-            nodes.push({
-                id: key,
-                label: tableName,
-                title: `${tableName}\nSources: ${table.source.length}\nTargets: ${table.target.length}\nVolatile: ${table.is_volatile ? 'Yes' : 'No'}`,
-                color: getNodeColor(table),
-                size: 20 + Math.min((table.source?.length || 0) + (table.target?.length || 0), 10) * 2,
-                font: { size: 12, face: 'Arial' }
-            });
-        }
-    });
-    // Create edges
-    const edges = [];
-    const edgeMap = new Map(); // To avoid duplicate edges
-    
-    uniqueTableKeys.forEach(key => {
-        const table = tableKeyMap[key];
-        if (table) {
-            // Source relationships
-            (table.source || []).forEach(rel => {
-                // Find the related table in the selected set by checking all possible script combinations
-                let foundSrcKey = null;
-                for (const selectedKey of uniqueTableKeys) {
-                    const selectedTableName = selectedKey.split('::')[1];
-                    if (selectedTableName === rel.name) {
-                        foundSrcKey = selectedKey;
-                        break;
-                    }
-                }
-                
-                if (foundSrcKey) {
-                    const edgeKey = `${foundSrcKey}->${key}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        const opLabel = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: rel.operation }]);
-                        edges.push({
-                            from: foundSrcKey,
-                            to: key,
-                            arrows: 'to',
-                            color: { color: '#28a745', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${opLabel}`,
-                            label: opLabel,
-                            font: { size: 10, color: '#28a745' }
-                        });
-                    }
-                }
-            });
-            
-            // Target relationships
-            (table.target || []).forEach(rel => {
-                // Find the related table in the selected set by checking all possible script combinations
-                let foundTgtKey = null;
-                for (const selectedKey of uniqueTableKeys) {
-                    const selectedTableName = selectedKey.split('::')[1];
-                    if (selectedTableName === rel.name) {
-                        foundTgtKey = selectedKey;
-                        break;
-                    }
-                }
-                
-                if (foundTgtKey) {
-                    const edgeKey = `${key}->${foundTgtKey}`;
-                    if (!edgeMap.has(edgeKey)) {
-                        edgeMap.set(edgeKey, true);
-                        const opLabel = getOperationDisplayText([{ scriptName: table.script_name || 'Unknown', indices: rel.operation }]);
-                        edges.push({
-                            from: key,
-                            to: foundTgtKey,
-                            arrows: 'to',
-                            color: { color: '#dc3545', opacity: 0.8 },
-                            width: 2,
-                            title: `Operations: ${opLabel}`,
-                            label: opLabel,
-                            font: { size: 10, color: '#dc3545' }
-                        });
-                    }
-                }
-            });
-        }
-    });
-    // Render network
-    const data = {
-        nodes: new vis.DataSet(nodes),
-        edges: new vis.DataSet(edges)
-    };
-    const options = {
-        nodes: { shape: 'box', borderWidth: 2, shadow: true },
-        edges: { smooth: { type: 'curvedCW', roundness: 0.2 } },
-        physics: { enabled: false },
-        interaction: { hover: true, tooltipDelay: 200, zoomView: true, dragView: true },
-        layout: { improvedLayout: true }
-    };
-    if (network) network.destroy();
-    network = new vis.Network(container, data, options);
-    network.on('click', function(params) {
-        if (params.nodes.length > 0) {
-            // Node clicked - apply filter to show this table and its relationships
-            const clickedNodeId = params.nodes[0];
-            showDirectlyRelatedNodes(clickedNodeId);
-            hideSidePanel();
-        } else if (params.edges.length > 0) {
-            // Edge clicked
-            showEdgeDetails(params.edges[0]);
-        } else {
-            hideSidePanel();
-        }
-    });
-}
+// createFilteredNetworkVisualization function removed - replaced by new ownership-based filtering system
 
 function hideSidePanel() {
     const sidePanel = document.getElementById('networkSidePanel');
@@ -1885,8 +1992,8 @@ let filteredTableNames = [];
 let selectedAutocompleteIndex = -1;
 
 function initializeTableNames() {
-    if (lineageData && lineageData.tables) {
-        allTableNames = Object.keys(lineageData.tables).sort();
+    if (allNodes) {
+        allTableNames = Object.values(allNodes).map(node => node.name).sort();
     }
 }
 
@@ -1896,60 +2003,58 @@ function searchNetworkNode() {
     const input = document.getElementById('networkNodeSearchInput');
     const query = input.value.trim().toLowerCase();
     if (!query) {
-        if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
-            const tables = lineageData.file_groups[selectedNetworkScript].tables;
-            const tablePairs = tables.map(tableName => {
-                const table = lineageData.tables[tableName];
-                const scriptName = table.script_name || 'Unknown';
-                return [scriptName, tableName];
-            });
-            createFilteredNetworkVisualization(tablePairs);
+        if (selectedNetworkScript) {
+            // Show all tables from the selected script
+            createNetworkVisualization([selectedNetworkScript], []);
         } else {
-            showAllNodes();
+            // Show all tables
+            createNetworkVisualization([], []);
         }
+        selectedTableFilters = [];
+        updateSelectedScriptLabel();
         return;
     }
+    
     // Find all nodes that match (case-insensitive, partial match)
-    let searchScope = allTableNames;
-    if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
-        searchScope = lineageData.file_groups[selectedNetworkScript].tables;
-    }
-    const matchedNodes = searchScope.filter(tableName => tableName.toLowerCase().includes(query));
+    const matchedNodes = Object.values(allNodes).filter(node => 
+        node.name.toLowerCase().includes(query)
+    );
+    
     if (matchedNodes.length === 1) {
-        showDirectlyRelatedNodes(matchedNodes[0]);
+        // Single match - show directly related nodes
+        showDirectlyRelatedNodes(matchedNodes[0].id);
         hideAutocompleteDropdown();
     } else if (matchedNodes.length > 1) {
-        const tablePairs = matchedNodes.map(tableName => {
-            const table = lineageData.tables[tableName];
-            const scriptName = table.script_name || 'Unknown';
-            return [scriptName, tableName];
-        });
-        createFilteredNetworkVisualization(tablePairs);
+        // Multiple matches - filter by table names
+        const tableNames = matchedNodes.map(node => node.name);
+        selectedTableFilters = tableNames;
+        createNetworkVisualization(selectedNetworkScript ? [selectedNetworkScript] : [], tableNames);
+        updateSelectedScriptLabel();
         hideAutocompleteDropdown();
     } else {
         // Show empty network with a message
         const container = document.getElementById('networkContainer');
         container.innerHTML = '<div style="padding: 40px; color: #dc3545; text-align: center; font-size: 1.2em;">No table found matching that name.</div>';
-        if (window.network) {
-            window.network.destroy();
-            window.network = null;
+        if (network) {
+            network.destroy();
+            network = null;
         }
+        selectedTableFilters = [];
+        updateSelectedScriptLabel();
     }
 }
 
 function clearNetworkNodeSearch() {
     document.getElementById('networkNodeSearchInput').value = '';
-    if (selectedNetworkScript && lineageData.file_groups[selectedNetworkScript]) {
-        const tables = lineageData.file_groups[selectedNetworkScript].tables;
-        const tablePairs = tables.map(tableName => {
-            const table = lineageData.tables[tableName];
-            const scriptName = table.script_name || 'Unknown';
-            return [scriptName, tableName];
-        });
-        createFilteredNetworkVisualization(tablePairs);
+    selectedTableFilters = [];
+    if (selectedNetworkScript) {
+        // Show all tables from the selected script
+        createNetworkVisualization([selectedNetworkScript], []);
     } else {
-        showAllNodes();
+        // Show all tables
+        createNetworkVisualization([], []);
     }
+    updateSelectedScriptLabel();
 }
 
 function showAutocompleteDropdown() {
@@ -2075,10 +2180,8 @@ function loadAllLineageFilesFromFolder(folderPath) {
             
             // Initialize merged data structure
             const mergedData = {
-                tables: {},
-                bteq_statements: [],
-                source_file: `${jsonFiles.length}`,
-                file_groups: {}
+                scripts: {},
+                source_file: `${jsonFiles.length}`
             };
             
             let processedFiles = 0;
@@ -2097,48 +2200,28 @@ function loadAllLineageFilesFromFolder(folderPath) {
                     .then(data => {
                         console.log(`Processing file: ${jsonFile}`);
                         
-                        // Create file group using script_name from the data
+                        // Create script entry using script_name from the data
                         const scriptName = data.script_name || jsonFile.replace('_lineage.json', '');
-                        mergedData.file_groups[scriptName] = {
-                            tables: [],
-                            statements: []
+                        mergedData.scripts[scriptName] = {
+                            script_name: scriptName,
+                            tables: data.tables || {},
+                            bteq_statements: data.bteq_statements || []
                         };
-                        
-                        // Merge tables with file tracking
-                        if (data.tables) {
-                            Object.keys(data.tables).forEach(tableName => {
-                                mergedData.tables[tableName] = data.tables[tableName];
-                                // Add script_name to the table object
-                                mergedData.tables[tableName].script_name = scriptName;
-                                mergedData.file_groups[scriptName].tables.push(tableName);
-                            });
-                        }
-                        
-                        // Merge BTEQ statements with file tracking
-                        if (data.bteq_statements) {
-                            const startIndex = mergedData.bteq_statements.length;
-                            mergedData.bteq_statements.push(...data.bteq_statements);
-                            
-                            // Track statement indices for this file
-                            for (let i = 0; i < data.bteq_statements.length; i++) {
-                                mergedData.file_groups[scriptName].statements.push(startIndex + i);
-                            }
-                        }
                         
                         processedFiles++;
                         
                         // When all files are processed, update the display
                         if (processedFiles === totalFiles) {
-                                                        console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
-                    lineageData = mergedData;
-                    buildScriptAwareMappings();
-                    displaySummary();
-                    displayTables();
-                    displayStatements();
-                    displayNetworkFileGroups();
-                    document.getElementById('summarySection').style.display = 'block';
-                    document.getElementById('tabSection').style.display = 'block';
-                    initializeTableNames();
+                            console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
+                            lineageData = mergedData;
+                            buildOwnershipModel();
+                            displaySummary();
+                            displayTables();
+                            displayStatements();
+                            displayNetworkFileGroups();
+                            document.getElementById('summarySection').style.display = 'block';
+                            document.getElementById('tabSection').style.display = 'block';
+                            initializeTableNames();
                             
                             // Update URL to include the folder path
                             const url = new URL(window.location);
@@ -2165,13 +2248,137 @@ function loadAllLineageFilesFromFolder(folderPath) {
 function updateSelectedScriptLabel() {
     const labelDiv = document.getElementById('selectedScriptLabel');
     if (!labelDiv) return;
-    if (selectedNetworkScript && lineageData.file_groups && lineageData.file_groups[selectedNetworkScript]) {
-
-        const scriptName = selectedNetworkScript;
-        labelDiv.textContent = `Script: ${scriptName}`;
-        labelDiv.style.display = '';
-    } else {
-        labelDiv.textContent = 'All Scripts';
-        labelDiv.style.display = '';
+    
+    let filterText = 'Filter: ';
+    let hasFilters = false;
+    
+    // Add script filter
+    if (selectedNetworkScript && lineageData.scripts && lineageData.scripts[selectedNetworkScript]) {
+        filterText += `Scripts: [${selectedNetworkScript}]`;
+        hasFilters = true;
     }
+    
+    // Add table filter
+    if (selectedTableFilters && selectedTableFilters.length > 0) {
+        if (hasFilters) {
+            filterText += ', ';
+        }
+        filterText += `Tables: [${selectedTableFilters.join(', ')}]`;
+        hasFilters = true;
+    }
+    
+    if (hasFilters) {
+        labelDiv.textContent = filterText;
+    } else {
+        labelDiv.textContent = 'Filter: None';
+    }
+    labelDiv.style.display = '';
+}
+
+// Apply filters to the ownership model
+function applyFilters(scriptFilters = [], tableFilters = []) {
+    let filteredNodes = Object.entries(allNodes);
+    
+    // 1. Apply script filters first
+    if (scriptFilters.length > 0) {
+        filteredNodes = filteredNodes.filter(([nodeId, node]) => {
+            const hasMatchingOwner = node.owners.some(owner => 
+                scriptFilters.includes(owner)
+            );
+            return hasMatchingOwner;
+        });
+    }
+    
+    // 2. Apply table filters - show tables that match the filter AND their directly related tables
+    if (tableFilters.length > 0) {
+        // First, find all nodes that match the table filter
+        const matchingNodeIds = new Set();
+        const relatedNodeIds = new Set();
+        
+        // Add nodes that match the table filter
+        filteredNodes.forEach(([nodeId, node]) => {
+            if (tableFilters.includes(node.name)) {
+                matchingNodeIds.add(nodeId);
+                relatedNodeIds.add(nodeId);
+            }
+        });
+        
+        // Add all directly related tables (sources and targets)
+        filteredNodes.forEach(([nodeId, node]) => {
+            if (matchingNodeIds.has(nodeId)) {
+                // Add source tables
+                node.source.forEach(sourceRel => {
+                    // Find the source table in our ownership model
+                    let sourceNodeId = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[sourceRel.name]) {
+                            const sourceTable = sData.tables[sourceRel.name];
+                            if (sourceTable.is_volatile) {
+                                sourceNodeId = `${sName}::${sourceRel.name}`;
+                                break;
+                            }
+                        }
+                    }
+                    if (!sourceNodeId) {
+                        sourceNodeId = sourceRel.name;
+                    }
+                    relatedNodeIds.add(sourceNodeId);
+                });
+                
+                // Add target tables
+                node.target.forEach(targetRel => {
+                    // Find the target table in our ownership model
+                    let targetNodeId = null;
+                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                        if (sData.tables && sData.tables[targetRel.name]) {
+                            const targetTable = sData.tables[targetRel.name];
+                            if (targetTable.is_volatile) {
+                                targetNodeId = `${sName}::${targetRel.name}`;
+                                break;
+                            }
+                        }
+                    }
+                    if (!targetNodeId) {
+                        targetNodeId = targetRel.name;
+                    }
+                    relatedNodeIds.add(targetNodeId);
+                });
+            }
+        });
+        
+        // Filter nodes to only include the matching and related nodes
+        filteredNodes = filteredNodes.filter(([nodeId, node]) => 
+            relatedNodeIds.has(nodeId)
+        );
+    }
+    
+    // 3. Filter edges based on filtered nodes and filter operations by script
+    const nodeIds = new Set(filteredNodes.map(([id, _]) => id));
+    const filteredEdges = allEdges
+        .filter(([from, to, operations]) => 
+            nodeIds.has(from) && nodeIds.has(to)
+        )
+        .map(([from, to, operations]) => {
+            // If script filters are applied, filter operations by script name
+            if (scriptFilters.length > 0) {
+                const filteredOperations = operations.filter(op => {
+                    const scriptName = op.split('::')[0];
+                    return scriptFilters.includes(scriptName);
+                });
+                return [from, to, filteredOperations];
+            }
+            return [from, to, operations];
+        });
+    
+    console.log('Filter applied:', {
+        scriptFilters,
+        tableFilters,
+        filteredNodes: filteredNodes.length,
+        filteredEdges: filteredEdges.length
+    });
+    
+    return { 
+        nodes: filteredNodes.map(([id, node]) => ({ id, ...node })), 
+        edges: filteredEdges 
+    };
 }
