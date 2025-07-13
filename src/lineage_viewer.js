@@ -1777,9 +1777,9 @@ function showDirectlyRelatedNodes(nodeId) {
 
 
 function showEdgeDetails(edgeId) {
-    const sidePanel = document.getElementById('networkSidePanel');
-    const sidePanelTitle = document.getElementById('sidePanelTitle');
-    const sidePanelContent = document.getElementById('sidePanelContent');
+    const networkModal = document.getElementById('networkModal');
+    const networkModalTitle = document.getElementById('networkModalTitle');
+    const networkModalContent = document.getElementById('networkModalContent');
     
     // Get the edge data
     const edge = network.body.data.edges.get(edgeId);
@@ -1801,7 +1801,7 @@ function showEdgeDetails(edgeId) {
         }
     });
     // Update title
-    sidePanelTitle.textContent = `${fromTable} → ${toTable}`;
+    networkModalTitle.textContent = `${fromTable} → ${toTable}`;
     // Create content with SQL statements
     let content = `
         <div style="margin-bottom: 20px;">
@@ -1854,8 +1854,8 @@ ${sqlStatement}
         });
     });
     content += `</div>`;
-    sidePanelContent.innerHTML = content;
-    sidePanel.style.display = 'block';
+    networkModalContent.innerHTML = content;
+    networkModal.style.display = 'block';
 }
 
 function showAllTablesNetwork() {
@@ -1911,8 +1911,13 @@ function showFileNetwork(fileName) {
 // createFilteredNetworkVisualization function removed - replaced by new ownership-based filtering system
 
 function hideSidePanel() {
-    const sidePanel = document.getElementById('networkSidePanel');
-    sidePanel.style.display = 'none';
+    const networkModal = document.getElementById('networkModal');
+    networkModal.style.display = 'none';
+}
+
+function closeNetworkModal() {
+    const networkModal = document.getElementById('networkModal');
+    networkModal.style.display = 'none';
 }
 
 function initializeResizeHandles() {
@@ -1962,9 +1967,14 @@ function initializeResizeHandles() {
 // Close modal when clicking outside
 window.onclick = function(event) {
     const sqlModal = document.getElementById('sqlModal');
+    const networkModal = document.getElementById('networkModal');
     
     if (event.target === sqlModal) {
         closeSqlModal();
+    }
+    
+    if (event.target === networkModal) {
+        closeNetworkModal();
     }
 }
 

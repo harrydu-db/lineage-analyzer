@@ -114,12 +114,6 @@
                         </div>
 
                         <div id="networkContainer" style="height: 600px; border: 1px solid #dee2e6; border-radius: 8px;"></div>
-                        <div id="networkSidePanel" style="width: 400px; background: #f8f9fa; border-left: 1px solid #dee2e6; padding: 20px; overflow-y: auto; display: none; position: absolute; top: 0; right: 0; height: 100%;">
-                            <h3 id="sidePanelTitle">Edge Details</h3>
-                            <div id="sidePanelContent">
-                                <p style="color: #6c757d;">Select an edge to view the SQL statements</p>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -137,6 +131,19 @@
                 <button class="close-btn" onclick="closeSqlModal()">✕ Close</button>
             </div>
             <div class="sql-content" id="sqlContent"></div>
+        </div>
+    </div>
+
+    <!-- Network Edge Details Modal -->
+    <div class="network-modal" id="networkModal">
+        <div class="network-modal-content">
+            <div class="network-modal-header">
+                <h3 id="networkModalTitle">Edge Details</h3>
+                <button class="close-btn" onclick="closeNetworkModal()">✕ Close</button>
+            </div>
+            <div class="network-modal-content-body" id="networkModalContent">
+                <p style="color: #6c757d;">Select an edge to view the SQL statements</p>
+            </div>
         </div>
     </div>
 

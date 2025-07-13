@@ -612,3 +612,78 @@ body {
 .autocomplete-item:last-child {
     border-bottom: none;
 }
+
+/* Network Modal Styles */
+.network-modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(5px);
+}
+
+.network-modal-content {
+    background-color: white;
+    margin: 3% auto;
+    padding: 0;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+.network-modal-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px 30px;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.network-modal-content-body {
+    padding: 30px;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: #f8f9fa;
+    border-radius: 0 0 12px 12px;
+    line-height: 1.6;
+    font-size: 14px;
+}
+
+.network-modal-content-body h4 {
+    color: #495057;
+    margin-bottom: 15px;
+    font-size: 16px;
+}
+
+.network-modal-content-body h5 {
+    color: #007bff;
+    margin-bottom: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.3s;
+}
+
+.network-modal-content-body h5:hover {
+    color: #0056b3;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
