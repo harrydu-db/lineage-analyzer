@@ -41,6 +41,7 @@
                 <button class="tab-btn active" onclick="switchTab('tables')">📋 Tables</button>
                 <button class="tab-btn" onclick="switchTab('statements')">🔧 Statements</button>
                 <button class="tab-btn" onclick="switchTab('network')">🕸️ Network View</button>
+                <button class="tab-btn network-insight-btn" onclick="showNetworkStatistics()" title="Show network statistics and insights">📊 Network Insight</button>
             </div>
             
             <div class="tab-content active" id="tablesTab">
@@ -162,6 +163,19 @@
             </div>
             <div class="network-modal-content-body" id="networkModalContent">
                 <p style="color: #6c757d;">Select an edge to view the SQL statements</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Network Statistics Modal -->
+    <div class="network-modal" id="networkStatsModal">
+        <div class="network-modal-content">
+            <div class="network-modal-header">
+                <h3 id="networkStatsModalTitle">Network Statistics</h3>
+                <button class="close-btn" onclick="closeNetworkStatsModal()">✕ Close</button>
+            </div>
+            <div class="network-modal-content-body" id="networkStatsModalContent">
+                <div class="stats-loading">Loading statistics...</div>
             </div>
         </div>
     </div>

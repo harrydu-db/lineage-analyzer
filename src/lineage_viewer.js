@@ -1992,6 +1992,7 @@ function initializeResizeHandles() {
 window.onclick = function(event) {
     const sqlModal = document.getElementById('sqlModal');
     const networkModal = document.getElementById('networkModal');
+    const networkStatsModal = document.getElementById('networkStatsModal');
     
     if (event.target === sqlModal) {
         closeSqlModal();
@@ -1999,6 +2000,10 @@ window.onclick = function(event) {
     
     if (event.target === networkModal) {
         closeNetworkModal();
+    }
+    
+    if (event.target === networkStatsModal) {
+        closeNetworkStatsModal();
     }
 }
 
@@ -2706,4 +2711,347 @@ function forceNetworkRecreation() {
         selectedTableFilters,
         true // force recreation
     );
+}
+
+// Network Statistics Functions
+function showNetworkStatistics() {
+    const modal = document.getElementById('networkStatsModal');
+    const content = document.getElementById('networkStatsModalContent');
+    
+    // Show loading state
+    content.innerHTML = '<div class="stats-loading">Calculating network statistics...</div>';
+    modal.style.display = 'block';
+    
+    // Calculate statistics asynchronously
+    setTimeout(() => {
+        const stats = calculateNetworkStatistics();
+        const { nodes: filteredNodes } = applyFilters(
+            selectedNetworkScript ? [selectedNetworkScript] : [], 
+            selectedTableFilters, 
+            connectionMode
+        );
+        displayNetworkStatistics(stats, filteredNodes);
+    }, 100);
+}
+
+function closeNetworkStatsModal() {
+    const modal = document.getElementById('networkStatsModal');
+    modal.style.display = 'none';
+}
+
+function calculateNetworkStatistics() {
+    // Get current filtered data
+    const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    // Calculate basic statistics
+    const totalTables = filteredNodes.length;
+    const totalEdges = filteredEdges.length;
+    
+    // Find source tables (tables with no incoming edges)
+    const sourceTables = filteredNodes.filter(node => {
+        const hasIncomingEdges = filteredEdges.some(([from, to]) => to === node.id);
+        return !hasIncomingEdges;
+    });
+    
+    // Find final target tables (tables with no outgoing edges)
+    const finalTargetTables = filteredNodes.filter(node => {
+        const hasOutgoingEdges = filteredEdges.some(([from, to]) => from === node.id);
+        return !hasOutgoingEdges;
+    });
+    
+    // Find unused volatile tables (volatile tables with no targets)
+    const unusedVolatileTables = filteredNodes.filter(node => {
+        if (!node.is_volatile) return false;
+        const hasOutgoingEdges = filteredEdges.some(([from, to]) => from === node.id);
+        return !hasOutgoingEdges;
+    });
+    
+    // Calculate table types
+    const volatileTables = filteredNodes.filter(node => node.is_volatile);
+    const globalTables = filteredNodes.filter(node => !node.is_volatile);
+    
+    // Calculate average connections
+    const totalConnections = filteredEdges.length * 2; // Each edge connects 2 nodes
+    const avgConnections = totalTables > 0 ? (totalConnections / totalTables).toFixed(1) : 0;
+    
+    // Find most connected tables
+    const nodeConnections = {};
+    filteredNodes.forEach(node => {
+        nodeConnections[node.id] = 0;
+    });
+    
+    filteredEdges.forEach(([from, to]) => {
+        nodeConnections[from] = (nodeConnections[from] || 0) + 1;
+        nodeConnections[to] = (nodeConnections[to] || 0) + 1;
+    });
+    
+    const mostConnectedTables = Object.entries(nodeConnections)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 5)
+        .map(([nodeId, connections]) => {
+            const node = filteredNodes.find(n => n.id === nodeId);
+            return {
+                name: node.name,
+                connections: connections,
+                isVolatile: node.is_volatile,
+                owners: node.owners
+            };
+        });
+    
+    return {
+        totalTables,
+        totalEdges,
+        sourceTables: sourceTables.length,
+        finalTargetTables: finalTargetTables.length,
+        unusedVolatileTables: unusedVolatileTables.length,
+        volatileTables: volatileTables.length,
+        globalTables: globalTables.length,
+        avgConnections,
+        mostConnectedTables,
+        unusedVolatileTableDetails: unusedVolatileTables.map(node => ({
+            name: node.name,
+            owners: node.owners
+        })),
+        sourceTableDetails: sourceTables.map(node => ({
+            name: node.name,
+            isVolatile: node.is_volatile,
+            owners: node.owners
+        })),
+        finalTargetTableDetails: finalTargetTables.map(node => ({
+            name: node.name,
+            isVolatile: node.is_volatile,
+            owners: node.owners
+        })),
+        currentFilters: {
+            scriptFilters: selectedNetworkScript ? [selectedNetworkScript] : [],
+            tableFilters: selectedTableFilters,
+            mode: connectionMode
+        }
+    };
+}
+
+function displayNetworkStatistics(stats, filteredNodes) {
+    const content = document.getElementById('networkStatsModalContent');
+    
+    let html = `
+        <div class="filter-info">
+            <h4>📊 Current Filters</h4>
+            <div class="filter-item">
+                <span class="filter-label">Script Filters:</span>
+                <span class="filter-value">${stats.currentFilters.scriptFilters.length > 0 ? stats.currentFilters.scriptFilters.join(', ') : 'None'}</span>
+            </div>
+            <div class="filter-item">
+                <span class="filter-label">Table Filters:</span>
+                <span class="filter-value">${stats.currentFilters.tableFilters.length > 0 ? stats.currentFilters.tableFilters.join(', ') : 'None'}</span>
+            </div>
+            <div class="filter-item">
+                <span class="filter-label">Connection Mode:</span>
+                <span class="filter-value">${stats.currentFilters.mode === 'direct' ? 'Direct' : 'Indirect'}</span>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h4>Total Tables</h4>
+                <div class="stat-number">${stats.totalTables}</div>
+                <div class="stat-description">Tables in current view</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Total Connections</h4>
+                <div class="stat-number">${stats.totalEdges}</div>
+                <div class="stat-description">Data flow connections</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Source Tables</h4>
+                <div class="stat-number">${stats.sourceTables}</div>
+                <div class="stat-description">Tables with no incoming data</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Final Targets</h4>
+                <div class="stat-number">${stats.finalTargetTables}</div>
+                <div class="stat-description">Tables with no outgoing data</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Volatile Tables</h4>
+                <div class="stat-number">${stats.volatileTables}</div>
+                <div class="stat-description">Script-specific tables</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Global Tables</h4>
+                <div class="stat-number">${stats.globalTables}</div>
+                <div class="stat-description">Shared across scripts</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Avg Connections</h4>
+                <div class="stat-number">${stats.avgConnections}</div>
+                <div class="stat-description">Per table average</div>
+            </div>
+            
+            <div class="stat-card">
+                <h4>Unused Volatile</h4>
+                <div class="stat-number">${stats.unusedVolatileTables}</div>
+                <div class="stat-description">Should be removed</div>
+            </div>
+        </div>
+    `;
+    
+    // Add most connected tables section
+    if (stats.mostConnectedTables.length > 0) {
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">🔗 Most Connected Tables</h4>
+                ${stats.mostConnectedTables.map(table => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div>
+                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-weight: bold; color: #007bff;">${table.connections} connections</div>
+                            <div style="font-size: 0.8em; color: #6c757d;">${table.owners.join(', ')}</div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // Add unused volatile tables section
+    if (stats.unusedVolatileTableDetails.length > 0) {
+        html += `
+            <div class="unused-tables-section">
+                <h4>⚠️ Unused Volatile Tables (${stats.unusedVolatileTableDetails.length})</h4>
+                <p style="color: #856404; margin-bottom: 15px; font-size: 0.9em;">
+                    These volatile tables have no targets and should be removed from the scripts.
+                </p>
+                ${stats.unusedVolatileTableDetails.map(table => `
+                    <div class="unused-table-item">
+                        <span class="table-name">${table.name}</span>
+                        <span class="table-owner">${table.owners.join(', ')}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="unused-tables-section">
+                <h4>✅ No Unused Volatile Tables</h4>
+                <div class="no-unused-tables">
+                    All volatile tables have targets. Great job!
+                </div>
+            </div>
+        `;
+    }
+    
+    // Add source and target table details
+    if (stats.sourceTableDetails.length > 0) {
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">📥 Source Tables (${stats.sourceTableDetails.length})</h4>
+                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                    Tables that provide data but don't receive data from other tables.
+                </p>
+                ${stats.sourceTableDetails.map(table => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div>
+                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                        </div>
+                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                            ${table.owners.join(', ')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    if (stats.finalTargetTableDetails.length > 0) {
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">📤 Final Target Tables (${stats.finalTargetTableDetails.length})</h4>
+                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                    Tables that receive data but don't provide data to other tables.
+                </p>
+                ${stats.finalTargetTableDetails.map(table => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div>
+                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                        </div>
+                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                            ${table.owners.join(', ')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // Add global tables section
+    if (stats.globalTables > 0) {
+        const globalTableDetails = filteredNodes.filter(node => !node.is_volatile).map(node => ({
+            name: node.name,
+            owners: node.owners
+        }));
+        
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">🌐 Global Tables (${stats.globalTables})</h4>
+                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                    Tables shared across multiple scripts. These are persistent and can be referenced by any script.
+                </p>
+                ${globalTableDetails.map(table => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div>
+                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                        </div>
+                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                            ${table.owners.join(', ')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // Add volatile tables section
+    if (stats.volatileTables > 0) {
+        const volatileTableDetails = filteredNodes.filter(node => node.is_volatile).map(node => ({
+            name: node.name,
+            owners: node.owners
+        }));
+        
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">⚡ Volatile Tables (${stats.volatileTables})</h4>
+                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                    Script-specific temporary tables. These are created and destroyed within individual scripts.
+                </p>
+                ${volatileTableDetails.map(table => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                        <div>
+                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                            <span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>
+                        </div>
+                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                            ${table.owners.join(', ')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    content.innerHTML = html;
 }
