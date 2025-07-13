@@ -8,6 +8,8 @@ let selectedNetworkScript = null;
 let selectedTableFilters = [];
 // Track the connection mode: 'direct' or 'indirect'
 let connectionMode = 'direct';
+// Track the last applied filters to avoid unnecessary network recreation
+let lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
 
 // Global data structures for proper ownership modeling
 let allNodes = {};
@@ -17,6 +19,8 @@ let allEdges = [];
 function buildOwnershipModel() {
     allNodes = {};
     allEdges = [];
+    // Reset filter tracking when new data is loaded
+    lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
     
     if (!lineageData || !lineageData.scripts) return;
     
@@ -1567,8 +1571,26 @@ function getNodeColor(table) {
     }
 }
 
-function createNetworkVisualization(scriptFilters = [], tableFilters = []) {
+function createNetworkVisualization(scriptFilters = [], tableFilters = [], force = false) {
     const container = document.getElementById('networkContainer');
+    
+    // Check if filters have actually changed
+    const currentFilters = { 
+        scriptFilters: scriptFilters, 
+        tableFilters: tableFilters, 
+        mode: connectionMode 
+    };
+    
+    // Compare with last applied filters
+    const filtersChanged = JSON.stringify(currentFilters) !== JSON.stringify(lastNetworkFilters);
+    
+    if (!filtersChanged && !force && network) {
+        console.log('Network filters unchanged, skipping recreation');
+        return;
+    }
+    
+    // Update last applied filters
+    lastNetworkFilters = currentFilters;
     
     // Apply filters to get filtered data
     const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters, connectionMode);
@@ -2588,13 +2610,11 @@ function toggleConnectionMode() {
     // Update the connection mode based on checkbox state
     connectionMode = checkbox.checked ? 'direct' : 'indirect';
     
-    // Re-render the network with the new mode
-    if (network) {
-        createNetworkVisualization(
-            selectedNetworkScript ? [selectedNetworkScript] : [], 
-            selectedTableFilters
-        );
-    }
+    // Re-render the network with the new mode (will only recreate if filters changed)
+    createNetworkVisualization(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters
+    );
 }
 
 function initializeScriptSearchInputEvents() {
@@ -2643,14 +2663,9 @@ function toggleFullscreen() {
         isFullscreen = true;
         
         // Recreate network to fit new container size
-        if (network) {
-            setTimeout(() => {
-                createNetworkVisualization(
-                    selectedNetworkScript ? [selectedNetworkScript] : [], 
-                    selectedTableFilters
-                );
-            }, 100);
-        }
+        setTimeout(() => {
+            forceNetworkRecreation();
+        }, 100);
         
         // Add escape key listener
         document.addEventListener('keydown', handleFullscreenEscape);
@@ -2663,14 +2678,9 @@ function toggleFullscreen() {
         isFullscreen = false;
         
         // Recreate network to fit original container size
-        if (network) {
-            setTimeout(() => {
-                createNetworkVisualization(
-                    selectedNetworkScript ? [selectedNetworkScript] : [], 
-                    selectedTableFilters
-                );
-            }, 100);
-        }
+        setTimeout(() => {
+            forceNetworkRecreation();
+        }, 100);
         
         // Remove escape key listener
         document.removeEventListener('keydown', handleFullscreenEscape);
@@ -2688,3 +2698,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add any additional initialization if needed
     console.log('Fullscreen functionality initialized');
 });
+
+// Helper function to force network recreation (useful for container size changes)
+function forceNetworkRecreation() {
+    createNetworkVisualization(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters,
+        true // force recreation
+    );
+}
