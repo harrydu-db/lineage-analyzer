@@ -2354,49 +2354,15 @@ function applyFilters(scriptFilters = [], tableFilters = [], mode = 'direct') {
             }
         } else {
             // Direct mode: only add directly connected tables (sources and targets)
-            Object.entries(allNodes).forEach(([nodeId, node]) => {
-                if (matchingNodeIds.has(nodeId)) {
-                    // Add source tables
-                    if (node.source) {
-                        node.source.forEach(sourceRel => {
-                            // Find the source table in our ownership model
-                            let sourceNodeId = null;
-                            for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                                if (sData.tables && sData.tables[sourceRel.name]) {
-                                    const sourceTable = sData.tables[sourceRel.name];
-                                    if (sourceTable.is_volatile) {
-                                        sourceNodeId = `${sName}::${sourceRel.name}`;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!sourceNodeId) {
-                                sourceNodeId = sourceRel.name;
-                            }
-                            relatedNodeIds.add(sourceNodeId);
-                        });
-                    }
-                    
-                    // Add target tables
-                    if (node.target) {
-                        node.target.forEach(targetRel => {
-                            // Find the target table in our ownership model
-                            let targetNodeId = null;
-                            for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                                if (sData.tables && sData.tables[targetRel.name]) {
-                                    const targetTable = sData.tables[targetRel.name];
-                                    if (targetTable.is_volatile) {
-                                        targetNodeId = `${sName}::${targetRel.name}`;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!targetNodeId) {
-                                targetNodeId = targetRel.name;
-                            }
-                            relatedNodeIds.add(targetNodeId);
-                        });
-                    }
+            // Use edges to find directly connected nodes in both directions
+            allEdges.forEach(([from, to, operations]) => {
+                if (matchingNodeIds.has(from)) {
+                    // If the source node matches, add the target node
+                    relatedNodeIds.add(to);
+                }
+                if (matchingNodeIds.has(to)) {
+                    // If the target node matches, add the source node
+                    relatedNodeIds.add(from);
                 }
             });
         }
@@ -2661,3 +2627,64 @@ function initializeScriptSearchInputEvents() {
         });
     }
 }
+
+// Fullscreen functionality
+let isFullscreen = false;
+
+function toggleFullscreen() {
+    const container = document.getElementById('networkFullscreenContainer');
+    const toggleBtn = document.getElementById('fullscreenToggleBtn');
+    
+    if (!isFullscreen) {
+        // Enter fullscreen
+        container.classList.add('fullscreen');
+        toggleBtn.innerHTML = '❌';
+        toggleBtn.title = 'Exit fullscreen mode';
+        isFullscreen = true;
+        
+        // Recreate network to fit new container size
+        if (network) {
+            setTimeout(() => {
+                createNetworkVisualization(
+                    selectedNetworkScript ? [selectedNetworkScript] : [], 
+                    selectedTableFilters
+                );
+            }, 100);
+        }
+        
+        // Add escape key listener
+        document.addEventListener('keydown', handleFullscreenEscape);
+        
+    } else {
+        // Exit fullscreen
+        container.classList.remove('fullscreen');
+        toggleBtn.innerHTML = '🔍';
+        toggleBtn.title = 'Toggle fullscreen mode';
+        isFullscreen = false;
+        
+        // Recreate network to fit original container size
+        if (network) {
+            setTimeout(() => {
+                createNetworkVisualization(
+                    selectedNetworkScript ? [selectedNetworkScript] : [], 
+                    selectedTableFilters
+                );
+            }, 100);
+        }
+        
+        // Remove escape key listener
+        document.removeEventListener('keydown', handleFullscreenEscape);
+    }
+}
+
+function handleFullscreenEscape(event) {
+    if (event.key === 'Escape' && isFullscreen) {
+        toggleFullscreen();
+    }
+}
+
+// Initialize fullscreen functionality when the page loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Add any additional initialization if needed
+    console.log('Fullscreen functionality initialized');
+});
