@@ -643,17 +643,6 @@ function loadFolder() {
         return;
     }
 
-    console.log(`Found ${jsonFiles.length} JSON files in folder`);
-
-    // Show loading information
-    const folderInfo = document.getElementById('folderInfo');
-    const folderStatus = document.getElementById('folderStatus');
-    const folderProgress = document.getElementById('folderProgress');
-    
-    folderStatus.textContent = `Found ${jsonFiles.length} JSON files in folder`;
-    folderProgress.textContent = `Processing files...`;
-    folderInfo.style.display = 'block';
-
     // Initialize merged data structure with script-based organization
     const mergedData = {
         scripts: {},
@@ -679,11 +668,10 @@ function loadFolder() {
                 };
                 
                 processedFiles++;
-                folderProgress.textContent = `Processed ${processedFiles} of ${totalFiles} files...`;
                 
                 // When all files are processed, update the display
                 if (processedFiles === totalFiles) {
-                    console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
+                    console.log(`Successfully merged ${totalFiles} files from uploaded folder`);
                     lineageData = mergedData;
                     initializeScriptNames();
                     buildOwnershipModel();
@@ -698,13 +686,12 @@ function loadFolder() {
                     
                     // Update URL to include the folder path
                     const url = new URL(window.location);
-                    url.searchParams.set('folder', folderPath);
+                    url.searchParams.set('folder', 'uploaded');
                     window.history.pushState({}, '', url);
                 }
             } catch (error) {
                 console.error(`Error parsing JSON file ${file.name}:`, error);
                 showError(`Error parsing JSON file ${file.name}: ${error.message}`);
-                folderInfo.style.display = 'none';
             }
         };
         reader.readAsText(file);
