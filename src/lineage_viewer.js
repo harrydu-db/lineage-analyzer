@@ -8,6 +8,8 @@ let selectedNetworkScript = null;
 let selectedTableFilters = [];
 // Track the connection mode: 'direct' or 'indirect'
 let connectionMode = 'direct';
+// Track the lock view state to prevent accidental filter changes
+let lockViewEnabled = false;
 // Track the last applied filters to avoid unnecessary network recreation
 let lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
 
@@ -1686,8 +1688,14 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
         if (params.nodes.length > 0) {
             // Node clicked - apply filter to show this table and its relationships
             const clickedNodeId = params.nodes[0];
-            showDirectlyRelatedNodes(clickedNodeId);
-            hideSidePanel();
+            
+            // Only apply filter if lock view is disabled
+            if (!lockViewEnabled) {
+                showDirectlyRelatedNodes(clickedNodeId);
+                hideSidePanel();
+            } else {
+                console.log('View is locked - node click ignored');
+            }
         } else if (params.edges.length > 0) {
             // Edge clicked
             showEdgeDetails(params.edges[0]);
@@ -2620,6 +2628,15 @@ function toggleConnectionMode() {
         selectedNetworkScript ? [selectedNetworkScript] : [], 
         selectedTableFilters
     );
+}
+
+function toggleLockView() {
+    const checkbox = document.getElementById('lockViewCheckbox');
+    
+    // Update the lock view state based on checkbox state
+    lockViewEnabled = checkbox.checked;
+    
+    console.log('Lock view:', lockViewEnabled ? 'enabled' : 'disabled');
 }
 
 function initializeScriptSearchInputEvents() {
