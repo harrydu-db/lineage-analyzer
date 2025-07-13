@@ -601,6 +601,7 @@ function loadJsonFile() {
                     bteq_statements: lineageData.bteq_statements || []
                 }
             };
+            initializeScriptNames();
             
             displaySummary();
             displayTables();
@@ -609,6 +610,7 @@ function loadJsonFile() {
             document.getElementById('summarySection').style.display = 'block';
             document.getElementById('tabSection').style.display = 'block';
             initializeTableNames();
+            initializeScriptSearchInputEvents();
         } catch (error) {
             showError('Error parsing JSON file: ' + error.message);
         }
@@ -675,6 +677,7 @@ function loadFolder() {
                 if (processedFiles === totalFiles) {
                     console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
                     lineageData = mergedData;
+                    initializeScriptNames();
                     buildOwnershipModel();
                     displaySummary();
                     displayTables();
@@ -683,6 +686,7 @@ function loadFolder() {
                     document.getElementById('summarySection').style.display = 'block';
                     document.getElementById('tabSection').style.display = 'block';
                     initializeTableNames();
+                    initializeScriptSearchInputEvents();
                     
                     // Update URL to include the folder path
                     const url = new URL(window.location);
@@ -847,7 +851,6 @@ function loadJsonFromPath(jsonPath) {
             if (!lineageData.source_file) {
                 lineageData.source_file = jsonPath;
             }
-            
             // Create script structure for single file to maintain consistency
             const fileName = jsonPath.split('/').pop().replace('_lineage.json', '');
             lineageData.scripts = {
@@ -857,6 +860,7 @@ function loadJsonFromPath(jsonPath) {
                     bteq_statements: lineageData.bteq_statements || []
                 }
             };
+            initializeScriptNames();
             
             displaySummary();
             displayTables();
@@ -865,6 +869,7 @@ function loadJsonFromPath(jsonPath) {
             document.getElementById('summarySection').style.display = 'block';
             document.getElementById('tabSection').style.display = 'block';
             initializeTableNames();
+            initializeScriptSearchInputEvents();
             
             // Update URL to include the JSON path
             const url = new URL(window.location);
@@ -1722,6 +1727,7 @@ function loadAllLineageFiles() {
                         if (processedFiles === totalFiles) {
                             console.log(`Successfully merged ${totalFiles} files`);
                             lineageData = mergedData;
+                            initializeScriptNames();
                             buildOwnershipModel();
                             displaySummary();
                             displayTables();
@@ -1730,6 +1736,7 @@ function loadAllLineageFiles() {
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
+                            initializeScriptSearchInputEvents();
                         }
                     })
                     .catch(error => {
@@ -2214,6 +2221,7 @@ function loadAllLineageFilesFromFolder(folderPath) {
                         if (processedFiles === totalFiles) {
                             console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
                             lineageData = mergedData;
+                            initializeScriptNames();
                             buildOwnershipModel();
                             displaySummary();
                             displayTables();
@@ -2222,6 +2230,7 @@ function loadAllLineageFilesFromFolder(folderPath) {
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
+                            initializeScriptSearchInputEvents();
                             
                             // Update URL to include the folder path
                             const url = new URL(window.location);
@@ -2278,6 +2287,7 @@ function updateSelectedScriptLabel() {
 // Apply filters to the ownership model
 function applyFilters(scriptFilters = [], tableFilters = []) {
     let filteredNodes = Object.entries(allNodes);
+    let relatedNodeIds = null;
     
     // 1. Apply script filters first
     if (scriptFilters.length > 0) {
@@ -2291,65 +2301,83 @@ function applyFilters(scriptFilters = [], tableFilters = []) {
     
     // 2. Apply table filters - show tables that match the filter AND their directly related tables
     if (tableFilters.length > 0) {
-        // First, find all nodes that match the table filter
+        // First, find all nodes that match the table filter (search in ALL nodes, not just filtered ones)
         const matchingNodeIds = new Set();
-        const relatedNodeIds = new Set();
+        relatedNodeIds = new Set();
         
-        // Add nodes that match the table filter
-        filteredNodes.forEach(([nodeId, node]) => {
+        // Add nodes that match the table filter from ALL nodes
+        Object.entries(allNodes).forEach(([nodeId, node]) => {
             if (tableFilters.includes(node.name)) {
                 matchingNodeIds.add(nodeId);
                 relatedNodeIds.add(nodeId);
             }
         });
         
-        // Add all directly related tables (sources and targets)
-        filteredNodes.forEach(([nodeId, node]) => {
+        // Add all directly related tables (sources and targets) from ALL nodes
+        Object.entries(allNodes).forEach(([nodeId, node]) => {
             if (matchingNodeIds.has(nodeId)) {
                 // Add source tables
-                node.source.forEach(sourceRel => {
-                    // Find the source table in our ownership model
-                    let sourceNodeId = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[sourceRel.name]) {
-                            const sourceTable = sData.tables[sourceRel.name];
-                            if (sourceTable.is_volatile) {
-                                sourceNodeId = `${sName}::${sourceRel.name}`;
-                                break;
+                if (node.source) {
+                    node.source.forEach(sourceRel => {
+                        // Find the source table in our ownership model
+                        let sourceNodeId = null;
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[sourceRel.name]) {
+                                const sourceTable = sData.tables[sourceRel.name];
+                                if (sourceTable.is_volatile) {
+                                    sourceNodeId = `${sName}::${sourceRel.name}`;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (!sourceNodeId) {
-                        sourceNodeId = sourceRel.name;
-                    }
-                    relatedNodeIds.add(sourceNodeId);
-                });
+                        if (!sourceNodeId) {
+                            sourceNodeId = sourceRel.name;
+                        }
+                        relatedNodeIds.add(sourceNodeId);
+                    });
+                }
                 
                 // Add target tables
-                node.target.forEach(targetRel => {
-                    // Find the target table in our ownership model
-                    let targetNodeId = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[targetRel.name]) {
-                            const targetTable = sData.tables[targetRel.name];
-                            if (targetTable.is_volatile) {
-                                targetNodeId = `${sName}::${targetRel.name}`;
-                                break;
+                if (node.target) {
+                    node.target.forEach(targetRel => {
+                        // Find the target table in our ownership model
+                        let targetNodeId = null;
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[targetRel.name]) {
+                                const targetTable = sData.tables[targetRel.name];
+                                if (targetTable.is_volatile) {
+                                    targetNodeId = `${sName}::${targetRel.name}`;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (!targetNodeId) {
-                        targetNodeId = targetRel.name;
-                    }
-                    relatedNodeIds.add(targetNodeId);
-                });
+                        if (!targetNodeId) {
+                            targetNodeId = targetRel.name;
+                        }
+                        relatedNodeIds.add(targetNodeId);
+                    });
+                }
             }
         });
         
-        // Filter nodes to only include the matching and related nodes
-        filteredNodes = filteredNodes.filter(([nodeId, node]) => 
-            relatedNodeIds.has(nodeId)
-        );
+        // Now filter nodes to only include the matching and related nodes
+        // But also respect script filters if they were applied
+        filteredNodes = Object.entries(allNodes).filter(([nodeId, node]) => {
+            // Must be in the related set
+            if (!relatedNodeIds.has(nodeId)) {
+                return false;
+            }
+            
+            // If script filters are applied, must also match script filter
+            if (scriptFilters.length > 0) {
+                const hasMatchingOwner = node.owners.some(owner => 
+                    scriptFilters.includes(owner)
+                );
+                return hasMatchingOwner;
+            }
+            
+            return true;
+        });
     }
     
     // 3. Filter edges based on filtered nodes and filter operations by script
@@ -2374,11 +2402,205 @@ function applyFilters(scriptFilters = [], tableFilters = []) {
         scriptFilters,
         tableFilters,
         filteredNodes: filteredNodes.length,
-        filteredEdges: filteredEdges.length
+        filteredEdges: filteredEdges.length,
+        relatedNodeIds: relatedNodeIds ? relatedNodeIds.size : 0
     });
     
     return { 
         nodes: filteredNodes.map(([id, node]) => ({ id, ...node })), 
         edges: filteredEdges 
     };
+}
+
+// Add script search for network view
+function searchNetworkScript() {
+    const input = document.getElementById('networkScriptSearchInput');
+    const query = input.value.trim();
+    if (!query) {
+        // If empty, show all scripts
+        selectedNetworkScript = null;
+        selectedTableFilters = [];
+        updateSelectedScriptLabel();
+        createNetworkVisualization([], []);
+        return;
+    }
+    // Find exact match (case-insensitive) in script names
+    const scriptNames = Object.keys(lineageData && lineageData.scripts ? lineageData.scripts : {});
+    const match = scriptNames.find(name => name.toLowerCase() === query.toLowerCase());
+    if (match) {
+        selectedNetworkScript = match;
+        selectedTableFilters = [];
+        updateSelectedScriptLabel();
+        createNetworkVisualization([match], []);
+    } else {
+        // No match, show error or do nothing
+        alert('No script found matching that name.');
+    }
+}
+
+function clearNetworkScriptSearch() {
+    document.getElementById('networkScriptSearchInput').value = '';
+    selectedNetworkScript = null;
+    selectedTableFilters = [];
+    updateSelectedScriptLabel();
+    createNetworkVisualization([], []);
+}
+
+// Allow pressing Enter in the script search input to trigger search
+window.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('networkScriptSearchInput');
+    if (input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                searchNetworkScript();
+                e.preventDefault();
+            }
+        });
+    }
+});
+
+// --- Script autocomplete state ---
+let allScriptNames = [];
+let filteredScriptNames = [];
+let selectedScriptAutocompleteIndex = -1;
+
+// Update allScriptNames when data is loaded
+function initializeScriptNames() {
+    if (lineageData && lineageData.scripts) {
+        allScriptNames = Object.keys(lineageData.scripts).sort();
+    } else {
+        allScriptNames = [];
+    }
+}
+
+function updateScriptAutocompleteDropdown() {
+    const input = document.getElementById('networkScriptSearchInput');
+    const dropdown = document.getElementById('scriptAutocompleteDropdown');
+    if (!input || !dropdown) return;
+    const query = input.value.trim().toLowerCase();
+    if (!query) {
+        dropdown.style.display = 'none';
+        filteredScriptNames = [];
+        return;
+    }
+    filteredScriptNames = allScriptNames.filter(name => name.toLowerCase().includes(query));
+    if (filteredScriptNames.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+    }
+    dropdown.innerHTML = filteredScriptNames.map((name, idx) =>
+        `<div class="autocomplete-item${idx === selectedScriptAutocompleteIndex ? ' selected' : ''}" onclick="selectScriptAutocompleteItem(${idx})">${name}</div>`
+    ).join('');
+    dropdown.style.display = 'block';
+}
+
+function showScriptAutocompleteDropdown() {
+    const dropdown = document.getElementById('scriptAutocompleteDropdown');
+    if (filteredScriptNames.length > 0) {
+        dropdown.style.display = 'block';
+    } else {
+        dropdown.style.display = 'none';
+    }
+}
+
+function hideScriptAutocompleteDropdown() {
+    const dropdown = document.getElementById('scriptAutocompleteDropdown');
+    dropdown.style.display = 'none';
+    selectedScriptAutocompleteIndex = -1;
+}
+
+function selectScriptAutocompleteItem(index) {
+    if (index >= 0 && index < filteredScriptNames.length) {
+        const selectedScript = filteredScriptNames[index];
+        document.getElementById('networkScriptSearchInput').value = selectedScript;
+        hideScriptAutocompleteDropdown();
+        searchNetworkScript();
+    }
+}
+
+function navigateScriptAutocomplete(direction) {
+    if (filteredScriptNames.length === 0) return;
+    if (direction === 'up') {
+        selectedScriptAutocompleteIndex = selectedScriptAutocompleteIndex <= 0 ? filteredScriptNames.length - 1 : selectedScriptAutocompleteIndex - 1;
+    } else if (direction === 'down') {
+        selectedScriptAutocompleteIndex = selectedScriptAutocompleteIndex >= filteredScriptNames.length - 1 ? 0 : selectedScriptAutocompleteIndex + 1;
+    }
+    updateScriptAutocompleteDropdown();
+}
+
+// --- Script search input events ---
+window.addEventListener('DOMContentLoaded', function() {
+    const scriptInput = document.getElementById('networkScriptSearchInput');
+    if (scriptInput) {
+        scriptInput.addEventListener('input', function() {
+            updateScriptAutocompleteDropdown();
+        });
+        scriptInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                if (selectedScriptAutocompleteIndex >= 0) {
+                    selectScriptAutocompleteItem(selectedScriptAutocompleteIndex);
+                } else {
+                    searchNetworkScript();
+                }
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                navigateScriptAutocomplete('up');
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                navigateScriptAutocomplete('down');
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                hideScriptAutocompleteDropdown();
+                e.preventDefault();
+            }
+        });
+    }
+    // Attach a single click listener for hiding both dropdowns
+    document.addEventListener('click', function(e) {
+        // Hide script autocomplete if click is outside its container
+        if (!e.target.closest('#networkScriptSearchInput') && !e.target.closest('#scriptAutocompleteDropdown')) {
+            hideScriptAutocompleteDropdown();
+        }
+        // Hide table autocomplete if click is outside its container
+        if (!e.target.closest('#networkNodeSearchInput') && !e.target.closest('#autocompleteDropdown')) {
+            hideAutocompleteDropdown();
+        }
+    });
+});
+
+// Call initializeScriptNames after data is loaded
+// (add this call in loadJsonFile, loadFolder, loadFromUrl, etc. after lineageData is set)
+// ... existing code ...
+// In loadJsonFile, loadFolder, loadFromUrl, loadAllLineageFiles, loadAllLineageFilesFromFolder, after lineageData is set:
+// initializeScriptNames();
+
+function initializeScriptSearchInputEvents() {
+    const input = document.getElementById('networkScriptSearchInput');
+    if (input) {
+        input.oninput = updateScriptAutocompleteDropdown;
+        input.onkeydown = function(e) {
+            if (e.key === 'Enter') {
+                if (selectedScriptAutocompleteIndex >= 0) {
+                    selectScriptAutocompleteItem(selectedScriptAutocompleteIndex);
+                } else {
+                    searchNetworkScript();
+                }
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                navigateScriptAutocomplete('up');
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                navigateScriptAutocomplete('down');
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                hideScriptAutocompleteDropdown();
+                e.preventDefault();
+            }
+        };
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#networkScriptSearchInput')) {
+                hideScriptAutocompleteDropdown();
+            }
+        });
+    }
 }
