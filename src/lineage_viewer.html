@@ -96,7 +96,14 @@
                     <div class="resize-handle" id="resizeHandle3"></div>
                     <div class="content-area">
                         <div id="selectedScriptLabel" style="font-size:1.0em; font-weight:bold; color:#1976d2; margin-bottom:8px; display:none;"></div>
+                        
                         <div style="margin-bottom: 16px; display: flex; gap: 16px; align-items: center;">
+                            <!-- Connection Mode Toggle -->
+                            <label for="directModeCheckbox" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: bold; color: #495057; white-space: nowrap;" title="When checked: Show only directly connected tables. When unchecked: Show all tables connected in the chain (including indirect connections).">
+                                <input type="checkbox" id="directModeCheckbox" checked onchange="toggleConnectionMode()" style="width: 16px; height: 16px; cursor: pointer;">
+                                Direct
+                            </label>
+                            
                             <!-- Script search box -->
                             <div class="autocomplete-container" style="flex: 1 1 0; display: flex; gap: 8px; align-items: center;">
                                 <input type="text" id="networkScriptSearchInput" placeholder="Search script name..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px;">

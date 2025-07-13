@@ -6,6 +6,8 @@ let network = null;
 let selectedNetworkScript = null;
 // Track the currently selected table filters in the network view
 let selectedTableFilters = [];
+// Track the connection mode: 'direct' or 'indirect'
+let connectionMode = 'direct';
 
 // Global data structures for proper ownership modeling
 let allNodes = {};
@@ -1569,7 +1571,7 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = []) {
     const container = document.getElementById('networkContainer');
     
     // Apply filters to get filtered data
-    const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters);
+    const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters, connectionMode);
     
     // Create vis.js nodes
     const visNodes = filteredNodes.map(node => {
@@ -2295,7 +2297,7 @@ function updateSelectedScriptLabel() {
 }
 
 // Apply filters to the ownership model
-function applyFilters(scriptFilters = [], tableFilters = []) {
+function applyFilters(scriptFilters = [], tableFilters = [], mode = 'direct') {
     let filteredNodes = Object.entries(allNodes);
     let relatedNodeIds = null;
     
@@ -2309,7 +2311,7 @@ function applyFilters(scriptFilters = [], tableFilters = []) {
         });
     }
     
-    // 2. Apply table filters - show tables that match the filter AND their directly related tables
+    // 2. Apply table filters - show tables that match the filter AND their connected tables
     if (tableFilters.length > 0) {
         // First, find all nodes that match the table filter (search in ALL nodes, not just filtered ones)
         const matchingNodeIds = new Set();
@@ -2323,52 +2325,81 @@ function applyFilters(scriptFilters = [], tableFilters = []) {
             }
         });
         
-        // Add all directly related tables (sources and targets) from ALL nodes
-        Object.entries(allNodes).forEach(([nodeId, node]) => {
-            if (matchingNodeIds.has(nodeId)) {
-                // Add source tables
-                if (node.source) {
-                    node.source.forEach(sourceRel => {
-                        // Find the source table in our ownership model
-                        let sourceNodeId = null;
-                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                            if (sData.tables && sData.tables[sourceRel.name]) {
-                                const sourceTable = sData.tables[sourceRel.name];
-                                if (sourceTable.is_volatile) {
-                                    sourceNodeId = `${sName}::${sourceRel.name}`;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!sourceNodeId) {
-                            sourceNodeId = sourceRel.name;
-                        }
-                        relatedNodeIds.add(sourceNodeId);
-                    });
+        if (mode === 'indirect') {
+            // Use breadth-first search to find all connected nodes in the chain
+            const visited = new Set();
+            const queue = Array.from(matchingNodeIds);
+            
+            while (queue.length > 0) {
+                const currentNodeId = queue.shift();
+                
+                if (visited.has(currentNodeId)) {
+                    continue;
                 }
                 
-                // Add target tables
-                if (node.target) {
-                    node.target.forEach(targetRel => {
-                        // Find the target table in our ownership model
-                        let targetNodeId = null;
-                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                            if (sData.tables && sData.tables[targetRel.name]) {
-                                const targetTable = sData.tables[targetRel.name];
-                                if (targetTable.is_volatile) {
-                                    targetNodeId = `${sName}::${targetRel.name}`;
-                                    break;
+                visited.add(currentNodeId);
+                relatedNodeIds.add(currentNodeId);
+                
+                // Find all edges that connect to this node
+                allEdges.forEach(([from, to, operations]) => {
+                    if (from === currentNodeId && !visited.has(to)) {
+                        // Add target node to queue
+                        queue.push(to);
+                    }
+                    if (to === currentNodeId && !visited.has(from)) {
+                        // Add source node to queue
+                        queue.push(from);
+                    }
+                });
+            }
+        } else {
+            // Direct mode: only add directly connected tables (sources and targets)
+            Object.entries(allNodes).forEach(([nodeId, node]) => {
+                if (matchingNodeIds.has(nodeId)) {
+                    // Add source tables
+                    if (node.source) {
+                        node.source.forEach(sourceRel => {
+                            // Find the source table in our ownership model
+                            let sourceNodeId = null;
+                            for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                                if (sData.tables && sData.tables[sourceRel.name]) {
+                                    const sourceTable = sData.tables[sourceRel.name];
+                                    if (sourceTable.is_volatile) {
+                                        sourceNodeId = `${sName}::${sourceRel.name}`;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        if (!targetNodeId) {
-                            targetNodeId = targetRel.name;
-                        }
-                        relatedNodeIds.add(targetNodeId);
-                    });
+                            if (!sourceNodeId) {
+                                sourceNodeId = sourceRel.name;
+                            }
+                            relatedNodeIds.add(sourceNodeId);
+                        });
+                    }
+                    
+                    // Add target tables
+                    if (node.target) {
+                        node.target.forEach(targetRel => {
+                            // Find the target table in our ownership model
+                            let targetNodeId = null;
+                            for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                                if (sData.tables && sData.tables[targetRel.name]) {
+                                    const targetTable = sData.tables[targetRel.name];
+                                    if (targetTable.is_volatile) {
+                                        targetNodeId = `${sName}::${targetRel.name}`;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!targetNodeId) {
+                                targetNodeId = targetRel.name;
+                            }
+                            relatedNodeIds.add(targetNodeId);
+                        });
+                    }
                 }
-            }
-        });
+            });
+        }
         
         // Now filter nodes to only include the matching and related nodes
         // But also respect script filters if they were applied
@@ -2411,6 +2442,7 @@ function applyFilters(scriptFilters = [], tableFilters = []) {
     console.log('Filter applied:', {
         scriptFilters,
         tableFilters,
+        mode,
         filteredNodes: filteredNodes.length,
         filteredEdges: filteredEdges.length,
         relatedNodeIds: relatedNodeIds ? relatedNodeIds.size : 0
@@ -2583,6 +2615,21 @@ window.addEventListener('DOMContentLoaded', function() {
 // ... existing code ...
 // In loadJsonFile, loadFolder, loadFromUrl, loadAllLineageFiles, loadAllLineageFilesFromFolder, after lineageData is set:
 // initializeScriptNames();
+
+function toggleConnectionMode() {
+    const checkbox = document.getElementById('directModeCheckbox');
+    
+    // Update the connection mode based on checkbox state
+    connectionMode = checkbox.checked ? 'direct' : 'indirect';
+    
+    // Re-render the network with the new mode
+    if (network) {
+        createNetworkVisualization(
+            selectedNetworkScript ? [selectedNetworkScript] : [], 
+            selectedTableFilters
+        );
+    }
+}
 
 function initializeScriptSearchInputEvents() {
     const input = document.getElementById('networkScriptSearchInput');
