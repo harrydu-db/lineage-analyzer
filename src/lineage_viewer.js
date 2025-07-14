@@ -17,6 +17,69 @@ let lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' }
 let allNodes = {};
 let allEdges = [];
 
+// Function to reset all network-related data when new data is loaded
+function resetNetworkData() {
+    console.log('Resetting network data for new data load...');
+    
+    // Reset network visualization
+    if (network) {
+        network.destroy();
+        network = null;
+    }
+    
+    // Reset network filters and selections
+    selectedNetworkScript = null;
+    selectedTableFilters = [];
+    connectionMode = 'direct';
+    lockViewEnabled = false;
+    lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
+    
+    // Reset ownership model data
+    allNodes = {};
+    allEdges = [];
+    
+    // Reset autocomplete data
+    allTableNames = [];
+    filteredTableNames = [];
+    selectedAutocompleteIndex = -1;
+    
+    allScriptNames = [];
+    filteredScriptNames = [];
+    selectedScriptAutocompleteIndex = -1;
+    
+    // Reset table selection
+    selectedTable = null;
+    
+    // Clear any existing network container content
+    const networkContainer = document.getElementById('networkContainer');
+    if (networkContainer) {
+        networkContainer.innerHTML = '';
+    }
+    
+    // Clear selected script label
+    const selectedScriptLabel = document.getElementById('selectedScriptLabel');
+    if (selectedScriptLabel) {
+        selectedScriptLabel.textContent = 'Filter: None';
+    }
+    
+    // Clear input fields
+    const scriptSearchInput = document.getElementById('networkScriptSearchInput');
+    if (scriptSearchInput) {
+        scriptSearchInput.value = '';
+    }
+    
+    const tableSearchInput = document.getElementById('networkNodeSearchInput');
+    if (tableSearchInput) {
+        tableSearchInput.value = '';
+    }
+    
+    // Hide any open dropdowns
+    hideAutocompleteDropdown();
+    hideScriptAutocompleteDropdown();
+    
+    console.log('Network data reset complete');
+}
+
 // Build proper ownership-based data model
 function buildOwnershipModel() {
     allNodes = {};
@@ -594,6 +657,9 @@ function loadJsonFile() {
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
+            // Reset network data before loading new data
+            resetNetworkData();
+            
             lineageData = JSON.parse(e.target.result);
             // Add source file information if not present
             if (!lineageData.source_file) {
@@ -618,7 +684,7 @@ function loadJsonFile() {
             document.getElementById('summarySection').style.display = 'block';
             document.getElementById('tabSection').style.display = 'block';
             initializeTableNames();
-            initializeScriptSearchInputEvents();
+            // initializeScriptSearchInputEvents();
         } catch (error) {
             showError('Error parsing JSON file: ' + error.message);
         }
@@ -672,6 +738,10 @@ function loadFolder() {
                 // When all files are processed, update the display
                 if (processedFiles === totalFiles) {
                     console.log(`Successfully merged ${totalFiles} files from uploaded folder`);
+                    
+                    // Reset network data before loading new data
+                    resetNetworkData();
+                    
                     lineageData = mergedData;
                     initializeScriptNames();
                     buildOwnershipModel();
@@ -682,7 +752,7 @@ function loadFolder() {
                     document.getElementById('summarySection').style.display = 'block';
                     document.getElementById('tabSection').style.display = 'block';
                     initializeTableNames();
-                    initializeScriptSearchInputEvents();
+                    // initializeScriptSearchInputEvents();
                     
                     // Update URL to include the folder path
                     const url = new URL(window.location);
@@ -841,6 +911,9 @@ function loadJsonFromPath(jsonPath) {
             return response.json();
         })
         .then(data => {
+            // Reset network data before loading new data
+            resetNetworkData();
+            
             lineageData = data;
             // Add source file information if not present
             if (!lineageData.source_file) {
@@ -864,7 +937,7 @@ function loadJsonFromPath(jsonPath) {
             document.getElementById('summarySection').style.display = 'block';
             document.getElementById('tabSection').style.display = 'block';
             initializeTableNames();
-            initializeScriptSearchInputEvents();
+            // initializeScriptSearchInputEvents();
             
             // Update URL to include the JSON path
             const url = new URL(window.location);
@@ -1508,6 +1581,85 @@ function closeSqlModal() {
     document.getElementById('sqlModal').style.display = 'none';
 }
 
+function showScriptOperations(scriptName) {
+    const modal = document.getElementById('sqlModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const sqlContent = document.getElementById('sqlContent');
+    
+    // Get the script data
+    let scriptData = null;
+    if (lineageData.scripts && lineageData.scripts[scriptName]) {
+        scriptData = lineageData.scripts[scriptName];
+    }
+    
+    if (!scriptData || !scriptData.bteq_statements) {
+        modalTitle.textContent = `Script Operations: ${scriptName}`;
+        sqlContent.textContent = 'No operations found for this script.';
+        modal.style.display = 'block';
+        return;
+    }
+    
+    modalTitle.textContent = `Script Operations: ${scriptName}`;
+    
+    // Get current filtered data to find operations for this script
+    const { edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    // Collect all operations for this script from the current network view
+    const scriptOperations = new Set();
+    filteredEdges.forEach(([from, to, operations]) => {
+        if (operations && operations.length > 0) {
+            operations.forEach(op => {
+                const [opScriptName, opId] = op.split('::');
+                if (opScriptName === scriptName) {
+                    scriptOperations.add(opId.replace('op', ''));
+                }
+            });
+        }
+    });
+    
+    // Sort operations by index
+    const sortedOperations = Array.from(scriptOperations).map(opIndex => parseInt(opIndex, 10)).sort((a, b) => a - b);
+    
+    if (sortedOperations.length === 0) {
+        sqlContent.textContent = 'No operations found for this script in the current network view.';
+        modal.style.display = 'block';
+        return;
+    }
+    
+    // Create content showing all operations for this script
+    let content = `<div style="margin-bottom: 20px;">
+        <h4 style="color: #495057; margin-bottom: 10px;">Operations in Current Network View</h4>
+        <p><strong>Script:</strong> ${scriptName}</p>
+        <p><strong>Operations:</strong> ${sortedOperations.length} found</p>
+    </div>
+    <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+        <h4 style="color: #495057; margin-bottom: 15px;">SQL Statements</h4>`;
+    
+    // Add each SQL statement
+    sortedOperations.forEach(opIndex => {
+        const sqlStatement = scriptData.bteq_statements[opIndex];
+        if (sqlStatement) {
+            const operationString = `${scriptName}::op${opIndex}`;
+            content += `
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;">
+                    <h5 style="color: #007bff; margin-bottom: 10px; cursor: pointer;" onclick="showSql('${operationString}')">${scriptName}:${opIndex}</h5>
+                    <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.4; max-height: 200px; overflow-y: auto; border: 1px solid #e9ecef;">
+${sqlStatement}
+                    </div>
+                </div>
+            `;
+        }
+    });
+    
+    content += `</div>`;
+    sqlContent.innerHTML = content;
+    modal.style.display = 'block';
+}
+
 function showError(message) {
     const contentArea = document.getElementById('contentArea');
     contentArea.innerHTML = `
@@ -1745,6 +1897,10 @@ function loadAllLineageFiles() {
                         // When all files are processed, update the display
                         if (processedFiles === totalFiles) {
                             console.log(`Successfully merged ${totalFiles} files`);
+                            
+                            // Reset network data before loading new data
+                            resetNetworkData();
+                            
                             lineageData = mergedData;
                             initializeScriptNames();
                             buildOwnershipModel();
@@ -1755,7 +1911,7 @@ function loadAllLineageFiles() {
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
-                            initializeScriptSearchInputEvents();
+                            // initializeScriptSearchInputEvents();
                         }
                     })
                     .catch(error => {
@@ -2002,30 +2158,7 @@ window.onclick = function(event) {
     }
 }
 
-// Add deselection functionality
-document.addEventListener('click', function(event) {
-    // Deselect when clicking on empty areas in content areas
-    const contentArea = document.getElementById('contentArea');
-    const statementContentArea = document.getElementById('statementContentArea');
-    
-    if (contentArea && contentArea.contains(event.target) && 
-        !event.target.closest('.table-item, .tree-item, .statement-item, .relationship-item, .operation-badge')) {
-        deselectAll();
-    }
-    
-    if (statementContentArea && statementContentArea.contains(event.target) && 
-        !event.target.closest('.table-item, .tree-item, .statement-item, .relationship-item, .operation-badge')) {
-        deselectAll();
-    }
-});
-
-// Add keyboard shortcuts for deselection
-document.addEventListener('keydown', function(event) {
-    // Escape key to deselect all
-    if (event.key === 'Escape') {
-        deselectAll();
-    }
-});
+// Global click and keyboard handlers are now handled by the consolidated event system
 
 // Search/filter for network node by name
 let allTableNames = [];
@@ -2088,13 +2221,11 @@ function searchNetworkNode() {
 function clearNetworkNodeSearch() {
     document.getElementById('networkNodeSearchInput').value = '';
     selectedTableFilters = [];
-    if (selectedNetworkScript) {
-        // Show all tables from the selected script
-        createNetworkVisualization([selectedNetworkScript], []);
-    } else {
-        // Show all tables
-        createNetworkVisualization([], []);
-    }
+    // Keep the current script filter, only clear table filters
+    createNetworkVisualization(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        []
+    );
     updateSelectedScriptLabel();
 }
 
@@ -2164,42 +2295,7 @@ function navigateAutocomplete(direction) {
     });
 }
 
-// Allow pressing Enter in the search input to trigger search
-document.addEventListener('DOMContentLoaded', function() {
-    const input = document.getElementById('networkNodeSearchInput');
-    if (input) {
-        input.addEventListener('input', function() {
-            updateAutocompleteDropdown();
-        });
-        
-        input.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                if (selectedAutocompleteIndex >= 0) {
-                    selectAutocompleteItem(selectedAutocompleteIndex);
-                } else {
-                    searchNetworkNode();
-                }
-                e.preventDefault();
-            } else if (e.key === 'ArrowUp') {
-                navigateAutocomplete('up');
-                e.preventDefault();
-            } else if (e.key === 'ArrowDown') {
-                navigateAutocomplete('down');
-                e.preventDefault();
-            } else if (e.key === 'Escape') {
-                hideAutocompleteDropdown();
-                e.preventDefault();
-            }
-        });
-        
-        // Hide dropdown when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.autocomplete-container')) {
-                hideAutocompleteDropdown();
-            }
-        });
-    }
-});
+// Table autocomplete events are now handled by the consolidated event system
 
 function loadAllLineageFilesFromFolder(folderPath) {
     // Load the all_lineage.txt file from the specified folder and process all JSON files listed in it
@@ -2254,6 +2350,10 @@ function loadAllLineageFilesFromFolder(folderPath) {
                         // When all files are processed, update the display
                         if (processedFiles === totalFiles) {
                             console.log(`Successfully merged ${totalFiles} files from ${folderPath}`);
+                            
+                            // Reset network data before loading new data
+                            resetNetworkData();
+                            
                             lineageData = mergedData;
                             initializeScriptNames();
                             buildOwnershipModel();
@@ -2264,7 +2364,7 @@ function loadAllLineageFilesFromFolder(folderPath) {
                             document.getElementById('summarySection').style.display = 'block';
                             document.getElementById('tabSection').style.display = 'block';
                             initializeTableNames();
-                            initializeScriptSearchInputEvents();
+                            // initializeScriptSearchInputEvents();
                             
                             // Update URL to include the folder path
                             const url = new URL(window.location);
@@ -2471,9 +2571,9 @@ function searchNetworkScript() {
 function clearNetworkScriptSearch() {
     document.getElementById('networkScriptSearchInput').value = '';
     selectedNetworkScript = null;
-    selectedTableFilters = [];
+    // Keep the current table filters, only clear script filter
+    createNetworkVisualization([], selectedTableFilters);
     updateSelectedScriptLabel();
-    createNetworkVisualization([], []);
 }
 
 
@@ -2548,26 +2648,128 @@ function navigateScriptAutocomplete(direction) {
     updateScriptAutocompleteDropdown();
 }
 
-// --- Script search input events ---
+// --- Consolidated Event Handling System ---
+// Single DOMContentLoaded event listener to handle all initialization
 window.addEventListener('DOMContentLoaded', function() {
-    // Attach a single click listener for hiding both dropdowns
+    console.log('Initializing consolidated event handling system...');
+    
+    // Initialize fullscreen functionality
+    console.log('Fullscreen functionality initialized');
+    
+    // Initialize table autocomplete events
+    initializeTableAutocompleteEvents();
+    
+    // Initialize script autocomplete events  
+    initializeScriptAutocompleteEvents();
+    
+    // Initialize global click handlers
+    initializeGlobalClickHandlers();
+    
+    // Initialize global keyboard handlers
+    initializeGlobalKeyboardHandlers();
+});
+
+function initializeTableAutocompleteEvents() {
+    const input = document.getElementById('networkNodeSearchInput');
+    if (input) {
+        input.addEventListener('input', function() {
+            updateAutocompleteDropdown();
+        });
+        
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                if (selectedAutocompleteIndex >= 0) {
+                    selectAutocompleteItem(selectedAutocompleteIndex);
+                } else {
+                    searchNetworkNode();
+                }
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                navigateAutocomplete('up');
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                navigateAutocomplete('down');
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                hideAutocompleteDropdown();
+                e.preventDefault();
+            }
+        });
+    }
+}
+
+function initializeScriptAutocompleteEvents() {
+    const input = document.getElementById('networkScriptSearchInput');
+    if (input) {
+        input.addEventListener('input', function() {
+            updateScriptAutocompleteDropdown();
+        });
+        
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                if (selectedScriptAutocompleteIndex >= 0) {
+                    selectScriptAutocompleteItem(selectedScriptAutocompleteIndex);
+                } else {
+                    searchNetworkScript();
+                }
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                navigateScriptAutocomplete('up');
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                navigateScriptAutocomplete('down');
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                hideScriptAutocompleteDropdown();
+                e.preventDefault();
+            }
+        });
+    }
+}
+
+function initializeGlobalClickHandlers() {
+    // Single consolidated click handler for all dropdown hiding
     document.addEventListener('click', function(e) {
         // Hide script autocomplete if click is outside its container
         if (!e.target.closest('#networkScriptSearchInput') && !e.target.closest('#scriptAutocompleteDropdown')) {
             hideScriptAutocompleteDropdown();
         }
+        
         // Hide table autocomplete if click is outside its container
         if (!e.target.closest('#networkNodeSearchInput') && !e.target.closest('#autocompleteDropdown')) {
             hideAutocompleteDropdown();
         }
+        
+        // Handle deselection when clicking on empty areas in content areas
+        const contentArea = document.getElementById('contentArea');
+        const statementContentArea = document.getElementById('statementContentArea');
+        
+        if (contentArea && contentArea.contains(e.target) && 
+            !e.target.closest('.table-item, .tree-item, .statement-item, .relationship-item, .operation-badge')) {
+            deselectAll();
+        }
+        
+        if (statementContentArea && statementContentArea.contains(e.target) && 
+            !e.target.closest('.table-item, .tree-item, .statement-item, .relationship-item, .operation-badge')) {
+            deselectAll();
+        }
     });
-});
+}
 
-// Call initializeScriptNames after data is loaded
-// (add this call in loadJsonFile, loadFolder, loadFromUrl, etc. after lineageData is set)
-// ... existing code ...
-// In loadJsonFile, loadFolder, loadFromUrl, loadAllLineageFiles, loadAllLineageFilesFromFolder, after lineageData is set:
-// initializeScriptNames();
+function initializeGlobalKeyboardHandlers() {
+    // Single consolidated keyboard handler
+    document.addEventListener('keydown', function(event) {
+        // Escape key to deselect all
+        if (event.key === 'Escape') {
+            deselectAll();
+        }
+    });
+}
+
+// Remove the old initializeScriptSearchInputEvents function since it's now handled by the consolidated system
+// function initializeScriptSearchInputEvents() {
+//     // This function is now replaced by initializeScriptAutocompleteEvents()
+// }
 
 function toggleConnectionMode() {
     const checkbox = document.getElementById('directModeCheckbox');
@@ -2667,11 +2869,6 @@ function handleFullscreenEscape(event) {
     }
 }
 
-// Initialize fullscreen functionality when the page loads
-document.addEventListener('DOMContentLoaded', function() {
-    // Add any additional initialization if needed
-    console.log('Fullscreen functionality initialized');
-});
 
 // Helper function to force network recreation (useful for container size changes)
 function forceNetworkRecreation() {
@@ -2768,7 +2965,6 @@ function calculateNetworkStatistics() {
     
     const mostConnectedTables = Object.entries(nodeConnections)
         .sort(([,a], [,b]) => b - a)
-        .slice(0, 5)
         .map(([nodeId, connections]) => {
             const node = filteredNodes.find(n => n.id === nodeId);
             return {
@@ -2778,6 +2974,28 @@ function calculateNetworkStatistics() {
                 owners: node.owners
             };
         });
+    
+    // Extract scripts from operations in the network
+    const includedScripts = new Set();
+    const scriptOperationCounts = {};
+    
+    filteredEdges.forEach(([from, to, operations]) => {
+        if (operations && operations.length > 0) {
+            operations.forEach(op => {
+                const [scriptName, opId] = op.split('::');
+                if (scriptName) {
+                    includedScripts.add(scriptName);
+                    scriptOperationCounts[scriptName] = (scriptOperationCounts[scriptName] || 0) + 1;
+                }
+            });
+        }
+    });
+    
+    // Convert to array and sort by operation count
+    const includedScriptsList = Array.from(includedScripts).map(scriptName => ({
+        name: scriptName,
+        operationCount: scriptOperationCounts[scriptName] || 0
+    })).sort((a, b) => b.operationCount - a.operationCount);
     
     return {
         totalTables,
@@ -2789,6 +3007,7 @@ function calculateNetworkStatistics() {
         globalTables: globalTables.length,
         avgConnections,
         mostConnectedTables,
+        includedScripts: includedScriptsList,
         unusedVolatileTableDetails: unusedVolatileTables.map(node => ({
             name: node.name,
             owners: node.owners
@@ -2879,26 +3098,67 @@ function displayNetworkStatistics(stats, filteredNodes) {
                 <div class="stat-number">${stats.unusedVolatileTables}</div>
                 <div class="stat-description">Should be removed</div>
             </div>
+            
+            <div class="stat-card">
+                <h4>Included Scripts</h4>
+                <div class="stat-number">${stats.includedScripts.length}</div>
+                <div class="stat-description">Scripts with operations</div>
+            </div>
         </div>
     `;
     
-    // Add most connected tables section
+    // Add Scripts section
+    if (stats.includedScripts.length > 0) {
+        html += `
+            <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('included-scripts')">
+                    <h4 style="color: #495057; margin: 0;">📜 Included Scripts (${stats.includedScripts.length})</h4>
+                    <span id="included-scripts-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="included-scripts-content" style="display: block;">
+                    <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                        Scripts that have operations in the current network view.
+                    </p>
+                    ${stats.includedScripts.map(script => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; cursor: pointer; transition: background-color 0.2s;" 
+                             onmouseover="this.style.backgroundColor='#f8f9fa'" 
+                             onmouseout="this.style.backgroundColor='transparent'"
+                             onclick="showScriptOperations('${script.name}')">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${script.name}</span>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-weight: bold; color: #28a745;">${script.operationCount} operations</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    // Add Tables section
     if (stats.mostConnectedTables.length > 0) {
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">🔗 Most Connected Tables</h4>
-                ${stats.mostConnectedTables.map(table => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-                        <div>
-                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
-                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('most-connected-tables')">
+                    <h4 style="color: #495057; margin: 0;">Tables (${stats.mostConnectedTables.length})</h4>
+                    <span id="most-connected-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="most-connected-tables-content" style="display: block;">
+                    ${stats.mostConnectedTables.map(table => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                                ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-weight: bold; color: #007bff;">${table.connections} connections</div>
+                                <div style="font-size: 0.8em; color: #6c757d;">${table.owners.join(', ')}</div>
+                            </div>
                         </div>
-                        <div style="text-align: right;">
-                            <div style="font-weight: bold; color: #007bff;">${table.connections} connections</div>
-                            <div style="font-size: 0.8em; color: #6c757d;">${table.owners.join(', ')}</div>
-                        </div>
-                    </div>
-                `).join('')}
+                    `).join('')}
+                </div>
             </div>
         `;
     }
@@ -2907,16 +3167,21 @@ function displayNetworkStatistics(stats, filteredNodes) {
     if (stats.unusedVolatileTableDetails.length > 0) {
         html += `
             <div class="unused-tables-section">
-                <h4>⚠️ Unused Volatile Tables (${stats.unusedVolatileTableDetails.length})</h4>
-                <p style="color: #856404; margin-bottom: 15px; font-size: 0.9em;">
-                    These volatile tables have no targets and should be removed from the scripts.
-                </p>
-                ${stats.unusedVolatileTableDetails.map(table => `
-                    <div class="unused-table-item">
-                        <span class="table-name">${table.name}</span>
-                        <span class="table-owner">${table.owners.join(', ')}</span>
-                    </div>
-                `).join('')}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('unused-volatile-tables')">
+                    <h4 style="margin: 0;">⚠️ Unused Volatile Tables (${stats.unusedVolatileTableDetails.length})</h4>
+                    <span id="unused-volatile-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="unused-volatile-tables-content" style="display: block;">
+                    <p style="color: #856404; margin-bottom: 15px; font-size: 0.9em;">
+                        These volatile tables have no targets and should be removed from the scripts.
+                    </p>
+                    ${stats.unusedVolatileTableDetails.map(table => `
+                        <div class="unused-table-item">
+                            <span class="table-name">${table.name}</span>
+                            <span class="table-owner">${table.owners.join(', ')}</span>
+                        </div>
+                    `).join('')}
+                </div>
             </div>
         `;
     } else {
@@ -2934,21 +3199,26 @@ function displayNetworkStatistics(stats, filteredNodes) {
     if (stats.sourceTableDetails.length > 0) {
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">📥 Source Tables (${stats.sourceTableDetails.length})</h4>
-                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
-                    Tables that provide data but don't receive data from other tables.
-                </p>
-                ${stats.sourceTableDetails.map(table => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-                        <div>
-                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
-                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('source-tables')">
+                    <h4 style="color: #495057; margin: 0;">📥 Source Tables (${stats.sourceTableDetails.length})</h4>
+                    <span id="source-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="source-tables-content" style="display: block;">
+                    <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                        Tables that provide data but don't receive data from other tables.
+                    </p>
+                    ${stats.sourceTableDetails.map(table => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                                ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                            </div>
+                            <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                                ${table.owners.join(', ')}
+                            </div>
                         </div>
-                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
-                            ${table.owners.join(', ')}
-                        </div>
-                    </div>
-                `).join('')}
+                    `).join('')}
+                </div>
             </div>
         `;
     }
@@ -2956,21 +3226,26 @@ function displayNetworkStatistics(stats, filteredNodes) {
     if (stats.finalTargetTableDetails.length > 0) {
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">📤 Final Tables (${stats.finalTargetTableDetails.length})</h4>
-                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
-                    Tables that receive data but don't provide data to other tables, or only reference themselves.
-                </p>
-                ${stats.finalTargetTableDetails.map(table => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-                        <div>
-                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
-                            ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('final-tables')">
+                    <h4 style="color: #495057; margin: 0;">📤 Final Tables (${stats.finalTargetTableDetails.length})</h4>
+                    <span id="final-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="final-tables-content" style="display: block;">
+                    <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                        Tables that receive data but don't provide data to other tables, or only reference themselves.
+                    </p>
+                    ${stats.finalTargetTableDetails.map(table => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                                ${table.isVolatile ? '<span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>' : ''}
+                            </div>
+                            <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                                ${table.owners.join(', ')}
+                            </div>
                         </div>
-                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
-                            ${table.owners.join(', ')}
-                        </div>
-                    </div>
-                `).join('')}
+                    `).join('')}
+                </div>
             </div>
         `;
     }
@@ -2984,20 +3259,25 @@ function displayNetworkStatistics(stats, filteredNodes) {
         
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">🌐 Global Tables (${stats.globalTables})</h4>
-                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
-                    Tables shared across multiple scripts. These are persistent and can be referenced by any script.
-                </p>
-                ${globalTableDetails.map(table => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-                        <div>
-                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('global-tables')">
+                    <h4 style="color: #495057; margin: 0;">🌐 Global Tables (${stats.globalTables})</h4>
+                    <span id="global-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="global-tables-content" style="display: block;">
+                    <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                        Tables shared across multiple scripts. These are persistent and can be referenced by any script.
+                    </p>
+                    ${globalTableDetails.map(table => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                            </div>
+                            <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                                ${table.owners.join(', ')}
+                            </div>
                         </div>
-                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
-                            ${table.owners.join(', ')}
-                        </div>
-                    </div>
-                `).join('')}
+                    `).join('')}
+                </div>
             </div>
         `;
     }
@@ -3011,24 +3291,47 @@ function displayNetworkStatistics(stats, filteredNodes) {
         
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">⚡ Volatile Tables (${stats.volatileTables})</h4>
-                <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
-                    Script-specific temporary tables. These are created and destroyed within individual scripts.
-                </p>
-                ${volatileTableDetails.map(table => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-                        <div>
-                            <span style="font-weight: bold; color: #495057;">${table.name}</span>
-                            <span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; cursor: pointer;" onclick="toggleStatsSection('volatile-tables')">
+                    <h4 style="color: #495057; margin: 0;">⚡ Volatile Tables (${stats.volatileTables})</h4>
+                    <span id="volatile-tables-toggle" style="font-size: 18px; color: #6c757d;">▼</span>
+                </div>
+                <div id="volatile-tables-content" style="display: block;">
+                    <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
+                        Script-specific temporary tables. These are created and destroyed within individual scripts.
+                    </p>
+                    ${volatileTableDetails.map(table => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+                            <div>
+                                <span style="font-weight: bold; color: #495057;">${table.name}</span>
+                                <span style="background: #ffc107; color: #856404; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">VOLATILE</span>
+                            </div>
+                            <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
+                                ${table.owners.join(', ')}
+                            </div>
                         </div>
-                        <div style="font-size: 0.8em; color: #6c757d; font-style: italic;">
-                            ${table.owners.join(', ')}
-                        </div>
-                    </div>
-                `).join('')}
+                    `).join('')}
+                </div>
             </div>
         `;
     }
     
     content.innerHTML = html;
+}
+
+// Function to toggle fold/unfold for statistics sections
+function toggleStatsSection(sectionId) {
+    const content = document.getElementById(`${sectionId}-content`);
+    const toggle = document.getElementById(`${sectionId}-toggle`);
+    
+    if (content && toggle) {
+        if (content.style.display === 'none') {
+            // Expand the section
+            content.style.display = 'block';
+            toggle.textContent = '▼';
+        } else {
+            // Collapse the section
+            content.style.display = 'none';
+            toggle.textContent = '▶';
+        }
+    }
 }
