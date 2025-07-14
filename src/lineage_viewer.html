@@ -36,7 +36,6 @@
                 <button class="tab-btn active" onclick="switchTab('tables')">📋 Tables</button>
                 <button class="tab-btn" onclick="switchTab('statements')">🔧 Statements</button>
                 <button class="tab-btn" onclick="switchTab('network')">🕸️ Network View</button>
-                <button class="tab-btn network-insight-btn" onclick="showNetworkStatistics()" title="Show network statistics and insights">📊 Network Insight</button>
             </div>
             
             <div class="tab-content active" id="tablesTab">
@@ -103,11 +102,21 @@
                                 <div id="selectedScriptLabel" style="font-size:1.0em; font-weight:bold; color:#1976d2; margin-bottom:8px; display:none;"></div>
                                 
                                 <div style="margin-bottom: 16px; display: flex; gap: 16px; align-items: center;">
-                                    <!-- Connection Mode Toggle -->
-                                    <label for="directModeCheckbox" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: bold; color: #495057; white-space: nowrap;" title="When checked: Show only directly connected tables. When unchecked: Show all tables connected in the chain (including indirect connections).">
-                                        <input type="checkbox" id="directModeCheckbox" checked onchange="toggleConnectionMode()" style="width: 16px; height: 16px; cursor: pointer;">
-                                        Direct
-                                    </label>
+                                    <!-- Network Insight Button -->
+                                    <button class="network-insight-btn" onclick="showNetworkStatistics()" title="Show network statistics and insights" style="padding: 8px 16px; border-radius: 4px; border: none; background: #28a745; color: white; font-weight: bold; cursor: pointer; white-space: nowrap;">📊 Network Insight</button>
+                                    
+                                    <!-- Connection Mode Selector -->
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <label for="connectionModeSelect" style="font-weight: bold; color: #495057; white-space: nowrap;" title="Select how to show connected tables">
+                                            Mode:
+                                        </label>
+                                        <select id="connectionModeSelect" onchange="toggleConnectionMode()" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; cursor: pointer;" title="Select how to show connected tables">
+                                            <option value="direct" title="Show only directly connected tables (immediate sources and targets)">Direct</option>
+                                            <option value="impacts_by" title="Show all tables that the selected tables can reach (downstream impact)">Impacts By</option>
+                                            <option value="impacted_by" title="Show all tables that can reach the selected tables (upstream impact)">Impacted By</option>
+                                            <option value="both" title="Show all tables connected to the selected tables in both directions">Both</option>
+                                        </select>
+                                    </div>
                                     
                                     <!-- Lock View Toggle -->
                                     <label for="lockViewCheckbox" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: bold; color: #495057; white-space: nowrap;" title="When checked: Lock the current view. Clicking on nodes will not change the filter. Useful when moving nodes around to prevent accidental filter changes.">

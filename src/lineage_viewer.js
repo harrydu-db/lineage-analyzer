@@ -6,7 +6,7 @@ let network = null;
 let selectedNetworkScript = null;
 // Track the currently selected table filters in the network view
 let selectedTableFilters = [];
-// Track the connection mode: 'direct' or 'indirect'
+// Track the connection mode: 'direct', 'impacts_by', 'impacted_by', or 'both'
 let connectionMode = 'direct';
 // Track the lock view state to prevent accidental filter changes
 let lockViewEnabled = false;
@@ -141,17 +141,26 @@ function buildOwnershipModel() {
             // Process source relationships to ensure referenced tables exist as nodes
             if (tableObj.source) {
                 tableObj.source.forEach(rel => {
-                    // Find the source table in any script
+                    // Find the source table - prioritize same script first
                     let sourceTable = null;
                     let sourceScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            sourceTable = sData.tables[rel.name];
-                            sourceScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        sourceTable = scriptData.tables[rel.name];
+                        sourceScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                sourceTable = sData.tables[rel.name];
+                                sourceScript = sName;
+                                break;
+                            }
                         }
                     }
                     
+                    // Determine source node ID based on the source table's properties
                     let sourceNodeId;
                     if (sourceTable && sourceTable.is_volatile) {
                         // Source is volatile, needs script prefix
@@ -180,14 +189,22 @@ function buildOwnershipModel() {
             // Process target relationships to ensure referenced tables exist as nodes
             if (tableObj.target) {
                 tableObj.target.forEach(rel => {
-                    // Find the target table in any script
+                    // Find the target table - prioritize same script first
                     let targetTable = null;
                     let targetScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            targetTable = sData.tables[rel.name];
-                            targetScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        targetTable = scriptData.tables[rel.name];
+                        targetScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                targetTable = sData.tables[rel.name];
+                                targetScript = sName;
+                                break;
+                            }
                         }
                     }
                     
@@ -222,6 +239,10 @@ function buildOwnershipModel() {
     
     // PASS 2: Build all edges using complete node information
     console.log('=== PASS 2: Building edges ===');
+    
+    // Create edge map for O(1) lookup performance
+    const edgeMap = new Map();
+    
     for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
         for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
             // Determine current node ID
@@ -235,14 +256,22 @@ function buildOwnershipModel() {
             // Process source relationships (tables that provide data to this table)
             if (tableObj.source) {
                 tableObj.source.forEach(rel => {
-                    // Find the source table in any script
+                    // Find the source table - prioritize same script first
                     let sourceTable = null;
                     let sourceScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            sourceTable = sData.tables[rel.name];
-                            sourceScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        sourceTable = scriptData.tables[rel.name];
+                        sourceScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                sourceTable = sData.tables[rel.name];
+                                sourceScript = sName;
+                                break;
+                            }
                         }
                     }
                     
@@ -256,36 +285,40 @@ function buildOwnershipModel() {
                         sourceNodeId = rel.name;
                     }
                     
-                    // Only create edge if both nodes exist
-                    if (allNodes[sourceNodeId] && allNodes[currentNodeId]) {
+                    // Only create edge if both nodes exist and it's not a self-reference
+                    if (allNodes[sourceNodeId] && allNodes[currentNodeId] && sourceNodeId !== currentNodeId) {
                         // Create edge
                         const edgeKey = `${sourceNodeId}->${currentNodeId}`;
-                        const existingEdge = allEdges.find(e => e[0] === sourceNodeId && e[1] === currentNodeId);
+                        const existingEdge = edgeMap.get(edgeKey);
                         
                         if (existingEdge) {
-                            // Edge already exists, but only add operations if this is the script that defines this relationship
-                            // Check if this script owns the target table (for source relationships)
-                            const targetNode = allNodes[currentNodeId];
-                            if (targetNode && targetNode.owners && targetNode.owners.includes(scriptName)) {
-                                if (rel.operation && rel.operation.length > 0) {
-                                    const existingOps = new Set(existingEdge[2]);
-                                    rel.operation.forEach(opIndex => {
-                                        existingOps.add(`${scriptName}::op${opIndex}`);
-                                    });
-                                    existingEdge[2] = Array.from(existingOps);
-                                }
+                            // Edge already exists, add operations if this script has operations for this relationship
+                            if (rel.operation && rel.operation.length > 0) {
+                                const existingOps = new Set(existingEdge[2]);
+                                rel.operation.forEach(opIndex => {
+                                    existingOps.add(`${scriptName}::op${opIndex}`);
+                                });
+                                existingEdge[2] = Array.from(existingOps);
+                                console.log(`Updated existing edge: ${sourceNodeId} -> ${currentNodeId} with operations from ${scriptName}`);
                             }
                         } else {
-                            // Create new edge - only if this script owns the target table AND there are operations
-                            const targetNode = allNodes[currentNodeId];
-                            if (targetNode && targetNode.owners && targetNode.owners.includes(scriptName) && rel.operation && rel.operation.length > 0) {
+                            // Create new edge - if there are operations and both nodes exist
+                            if (rel.operation && rel.operation.length > 0) {
                                 const operations = rel.operation.map(opIndex => `${scriptName}::op${opIndex}`);
-                                allEdges.push([sourceNodeId, currentNodeId, operations]);
+                                const newEdge = [sourceNodeId, currentNodeId, operations];
+                                allEdges.push(newEdge);
+                                edgeMap.set(edgeKey, newEdge);
                                 console.log(`Created edge: ${sourceNodeId} -> ${currentNodeId} (${operations.length} operations) from script ${scriptName}`);
+                            } else {
+                                console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (no operations defined)`);
                             }
                         }
                     } else {
-                        console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (one or both nodes don't exist)`);
+                        if (sourceNodeId === currentNodeId) {
+                            console.warn(`Skipping self-reference edge: ${sourceNodeId} -> ${currentNodeId}`);
+                        } else {
+                            console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (one or both nodes don't exist)`);
+                        }
                     }
                 });
             }
@@ -293,14 +326,22 @@ function buildOwnershipModel() {
             // Process target relationships (tables that receive data from this table)
             if (tableObj.target) {
                 tableObj.target.forEach(rel => {
-                    // Find the target table in any script
+                    // Find the target table - prioritize same script first
                     let targetTable = null;
                     let targetScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            targetTable = sData.tables[rel.name];
-                            targetScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        targetTable = scriptData.tables[rel.name];
+                        targetScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                targetTable = sData.tables[rel.name];
+                                targetScript = sName;
+                                break;
+                            }
                         }
                     }
                     
@@ -314,36 +355,40 @@ function buildOwnershipModel() {
                         targetNodeId = rel.name;
                     }
                     
-                    // Only create edge if both nodes exist
-                    if (allNodes[currentNodeId] && allNodes[targetNodeId]) {
+                    // Only create edge if both nodes exist and it's not a self-reference
+                    if (allNodes[currentNodeId] && allNodes[targetNodeId] && currentNodeId !== targetNodeId) {
                         // Create edge
                         const edgeKey = `${currentNodeId}->${targetNodeId}`;
-                        const existingEdge = allEdges.find(e => e[0] === currentNodeId && e[1] === targetNodeId);
+                        const existingEdge = edgeMap.get(edgeKey);
                         
                         if (existingEdge) {
-                            // Edge already exists, but only add operations if this is the script that defines this relationship
-                            // Check if this script owns the source table (for target relationships)
-                            const sourceNode = allNodes[currentNodeId];
-                            if (sourceNode && sourceNode.owners && sourceNode.owners.includes(scriptName)) {
-                                if (rel.operation && rel.operation.length > 0) {
-                                    const existingOps = new Set(existingEdge[2]);
-                                    rel.operation.forEach(opIndex => {
-                                        existingOps.add(`${scriptName}::op${opIndex}`);
-                                    });
-                                    existingEdge[2] = Array.from(existingOps);
-                                }
+                            // Edge already exists, add operations if this script has operations for this relationship
+                            if (rel.operation && rel.operation.length > 0) {
+                                const existingOps = new Set(existingEdge[2]);
+                                rel.operation.forEach(opIndex => {
+                                    existingOps.add(`${scriptName}::op${opIndex}`);
+                                });
+                                existingEdge[2] = Array.from(existingOps);
+                                console.log(`Updated existing edge: ${currentNodeId} -> ${targetNodeId} with operations from ${scriptName}`);
                             }
                         } else {
-                            // Create new edge - only if this script owns the source table AND there are operations
-                            const sourceNode = allNodes[currentNodeId];
-                            if (sourceNode && sourceNode.owners && sourceNode.owners.includes(scriptName) && rel.operation && rel.operation.length > 0) {
+                            // Create new edge - if there are operations and both nodes exist
+                            if (rel.operation && rel.operation.length > 0) {
                                 const operations = rel.operation.map(opIndex => `${scriptName}::op${opIndex}`);
-                                allEdges.push([currentNodeId, targetNodeId, operations]);
+                                const newEdge = [currentNodeId, targetNodeId, operations];
+                                allEdges.push(newEdge);
+                                edgeMap.set(edgeKey, newEdge);
                                 console.log(`Created edge: ${currentNodeId} -> ${targetNodeId} (${operations.length} operations) from script ${scriptName}`);
+                            } else {
+                                console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (no operations defined)`);
                             }
                         }
                     } else {
-                        console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (one or both nodes don't exist)`);
+                        if (currentNodeId === targetNodeId) {
+                            console.warn(`Skipping self-reference edge: ${currentNodeId} -> ${targetNodeId}`);
+                        } else {
+                            console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (one or both nodes don't exist)`);
+                        }
                     }
                 });
             }
@@ -385,14 +430,22 @@ function buildOwnershipModel() {
             // Scan source relationships to find tables that are referenced
             if (tableObj.source) {
                 tableObj.source.forEach(rel => {
-                    // Find the source table in any script
+                    // Find the source table - prioritize same script first
                     let sourceTable = null;
                     let sourceScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            sourceTable = sData.tables[rel.name];
-                            sourceScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        sourceTable = scriptData.tables[rel.name];
+                        sourceScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                sourceTable = sData.tables[rel.name];
+                                sourceScript = sName;
+                                break;
+                            }
                         }
                     }
                     
@@ -409,14 +462,22 @@ function buildOwnershipModel() {
             // Scan target relationships to find tables that are referenced
             if (tableObj.target) {
                 tableObj.target.forEach(rel => {
-                    // Find the target table in any script
+                    // Find the target table - prioritize same script first
                     let targetTable = null;
                     let targetScript = null;
-                    for (const [sName, sData] of Object.entries(lineageData.scripts)) {
-                        if (sData.tables && sData.tables[rel.name]) {
-                            targetTable = sData.tables[rel.name];
-                            targetScript = sName;
-                            break;
+                    
+                    // First, try to find the table in the current script
+                    if (scriptData.tables && scriptData.tables[rel.name]) {
+                        targetTable = scriptData.tables[rel.name];
+                        targetScript = scriptName;
+                    } else {
+                        // If not found in current script, look in other scripts
+                        for (const [sName, sData] of Object.entries(lineageData.scripts)) {
+                            if (sData.tables && sData.tables[rel.name]) {
+                                targetTable = sData.tables[rel.name];
+                                targetScript = sName;
+                                break;
+                            }
                         }
                     }
                     
@@ -1782,9 +1843,20 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     console.log('Function: createNetworkVisualization');
     console.log('Script filters:', scriptFilters);
     console.log('Table filters:', tableFilters);
+    console.log('Connection mode:', connectionMode);
     console.log('Total nodes:', visNodes.length);
     console.log('Nodes:', visNodes.map(n => n.id).sort());
     console.log('Total edges:', visEdges.length);
+    
+    // Additional debug info about volatile tables
+    const volatileNodes = filteredNodes.filter(node => node.is_volatile);
+    const globalNodes = filteredNodes.filter(node => !node.is_volatile);
+    console.log(`Volatile tables: ${volatileNodes.length}, Global tables: ${globalNodes.length}`);
+    
+    if (volatileNodes.length > 0) {
+        console.log('Volatile tables in network:', volatileNodes.map(n => `${n.name} (${n.owners.join(', ')})`));
+    }
+    
     console.log('================================');
     
     // Create the network
@@ -1845,6 +1917,275 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
             hideSidePanel();
         }
     });
+    
+    // Validate the network for volatile table violations
+    validateNetworkVolatileTableRules(filteredNodes, filteredEdges);
+    
+    // Detect data modeling issues
+    detectDataModelingIssues(filteredNodes, filteredEdges);
+    
+    // Print a quick summary
+    getNetworkValidationSummary(filteredNodes, filteredEdges);
+    
+    // Perform comprehensive algorithm analysis
+    analyzeNetworkAlgorithm(filteredNodes, filteredEdges);
+}
+
+// Validate volatile table rules in the network
+function validateNetworkVolatileTableRules(nodes, edges) {
+    console.log('=== VOLATILE TABLE VALIDATION ===');
+    
+    // Get all volatile nodes with their owners
+    const volatileNodes = nodes.filter(node => node.is_volatile);
+    const volatileNodeMap = new Map();
+    
+    volatileNodes.forEach(node => {
+        volatileNodeMap.set(node.id, {
+            name: node.name,
+            owners: node.owners,
+            isVolatile: node.is_volatile
+        });
+    });
+    
+    console.log(`Found ${volatileNodes.length} volatile tables in the network`);
+    
+    // Check each edge for volatile table violations and circular references
+    const violations = [];
+    const circularReferences = [];
+    
+    edges.forEach(([from, to, operations]) => {
+        const fromNode = volatileNodeMap.get(from);
+        const toNode = volatileNodeMap.get(to);
+        
+        // Check if both nodes are volatile
+        if (fromNode && toNode) {
+            // Both are volatile - check if they're owned by different scripts
+            const fromOwners = new Set(fromNode.owners);
+            const toOwners = new Set(toNode.owners);
+            
+            // Check if there's any overlap in ownership
+            const hasCommonOwner = Array.from(fromOwners).some(owner => toOwners.has(owner));
+            
+            if (!hasCommonOwner) {
+                violations.push({
+                    from: fromNode.name,
+                    fromOwners: fromNode.owners,
+                    to: toNode.name,
+                    toOwners: toNode.owners,
+                    operations: operations,
+                    type: 'cross_script_volatile_edge'
+                });
+            }
+        }
+        
+        // Check for circular references (self-loops)
+        if (from === to) {
+            circularReferences.push({
+                node: from,
+                operations: operations
+            });
+        }
+    });
+    
+    // Report volatile table violations
+    if (violations.length === 0) {
+        console.log('✅ No volatile table violations found');
+        console.log('   All volatile table edges are within the same script scope');
+    } else {
+        console.error(`❌ Found ${violations.length} volatile table violations:`);
+        violations.forEach((violation, index) => {
+            console.error(`   ${index + 1}. ${violation.from} (${violation.fromOwners.join(', ')}) → ${violation.to} (${violation.toOwners.join(', ')})`);
+            console.error(`      Operations: ${getOperationDisplayText(violation.operations)}`);
+            console.error(`      Issue: Volatile table owned by different script`);
+        });
+    }
+    
+    // Report circular references
+    if (circularReferences.length === 0) {
+        console.log('✅ No circular references found');
+    } else {
+        console.warn(`⚠️ Found ${circularReferences.length} circular references (self-loops):`);
+        circularReferences.forEach((ref, index) => {
+            console.warn(`   ${index + 1}. ${ref.node} → ${ref.node}`);
+            console.warn(`      Operations: ${getOperationDisplayText(ref.operations)}`);
+        });
+    }
+    
+    // Additional validation: Check for volatile tables with no owners
+    const volatileWithoutOwners = volatileNodes.filter(node => !node.owners || node.owners.length === 0);
+    if (volatileWithoutOwners.length > 0) {
+        console.warn(`⚠️ Found ${volatileWithoutOwners.length} volatile tables without owners:`);
+        volatileWithoutOwners.forEach(node => {
+            console.warn(`   - ${node.name} (${node.id})`);
+        });
+    }
+    
+    // Additional validation: Check for volatile tables with multiple owners
+    const volatileWithMultipleOwners = volatileNodes.filter(node => node.owners && node.owners.length > 1);
+    if (volatileWithMultipleOwners.length > 0) {
+        console.warn(`⚠️ Found ${volatileWithMultipleOwners.length} volatile tables with multiple owners:`);
+        volatileWithMultipleOwners.forEach(node => {
+            console.warn(`   - ${node.name} (${node.id}): [${node.owners.join(', ')}]`);
+        });
+    }
+    
+    console.log('=== END VOLATILE TABLE VALIDATION ===');
+    
+    return {
+        totalVolatileTables: volatileNodes.length,
+        violations: violations,
+        circularReferences: circularReferences,
+        volatileWithoutOwners: volatileWithoutOwners.length,
+        volatileWithMultipleOwners: volatileWithMultipleOwners.length
+    };
+}
+
+// Detect potential data modeling issues
+function detectDataModelingIssues(nodes, edges) {
+    console.log('=== DATA MODELING ISSUE DETECTION ===');
+    
+    // Find tables with the same name across different scripts
+    const tableNameGroups = new Map();
+    
+    nodes.forEach(node => {
+        const tableName = node.name;
+        if (!tableNameGroups.has(tableName)) {
+            tableNameGroups.set(tableName, []);
+        }
+        tableNameGroups.get(tableName).push(node);
+    });
+    
+    const duplicateTableIssues = [];
+    
+    tableNameGroups.forEach((nodesWithSameName, tableName) => {
+        if (nodesWithSameName.length > 1) {
+            const scripts = nodesWithSameName.map(node => {
+                const scriptName = node.id.includes('::') ? node.id.split('::')[0] : 'GLOBAL';
+                return { script: scriptName, isVolatile: node.is_volatile, nodeId: node.id };
+            });
+            
+            duplicateTableIssues.push({
+                tableName: tableName,
+                nodes: nodesWithSameName,
+                scripts: scripts
+            });
+        }
+    });
+    
+    if (duplicateTableIssues.length > 0) {
+        console.warn(`⚠️ Found ${duplicateTableIssues.length} tables with duplicate names across scripts:`);
+        duplicateTableIssues.forEach((issue, index) => {
+            console.warn(`   ${index + 1}. Table: ${issue.tableName}`);
+            issue.scripts.forEach(script => {
+                console.warn(`      - ${script.script}: ${script.isVolatile ? 'VOLATILE' : 'GLOBAL'} (${script.nodeId})`);
+            });
+            console.warn(`      Recommendation: Consider making this a global table or renaming to be script-specific`);
+        });
+    } else {
+        console.log('✅ No duplicate table names found across scripts');
+    }
+    
+    console.log('=== END DATA MODELING ISSUE DETECTION ===');
+    
+    return duplicateTableIssues;
+}
+
+// Helper function to get a quick summary of network validation
+function getNetworkValidationSummary(nodes, edges) {
+    const validation = validateNetworkVolatileTableRules(nodes, edges);
+    
+    console.log('=== NETWORK VALIDATION SUMMARY ===');
+    console.log(`Total nodes: ${nodes.length}`);
+    console.log(`Total edges: ${edges.length}`);
+    console.log(`Volatile tables: ${validation.totalVolatileTables}`);
+    console.log(`Violations: ${validation.violations.length}`);
+    console.log(`Circular references: ${validation.circularReferences.length}`);
+    console.log(`Volatile tables without owners: ${validation.volatileWithoutOwners}`);
+    console.log(`Volatile tables with multiple owners: ${validation.volatileWithMultipleOwners}`);
+    
+    if (validation.violations.length > 0) {
+        console.log('❌ Network has volatile table violations!');
+    } else if (validation.circularReferences.length > 0) {
+        console.log('⚠️ Network has circular references!');
+    } else {
+        console.log('✅ Network passes validation');
+    }
+    console.log('=====================================');
+    
+    return validation;
+}
+
+// Comprehensive algorithm analysis function
+function analyzeNetworkAlgorithm(nodes, edges) {
+    console.log('=== ALGORITHM ANALYSIS ===');
+    
+    // Analyze node distribution
+    const volatileNodes = nodes.filter(node => node.is_volatile);
+    const globalNodes = nodes.filter(node => !node.is_volatile);
+    const scriptOwners = new Map();
+    
+    nodes.forEach(node => {
+        node.owners.forEach(owner => {
+            if (!scriptOwners.has(owner)) {
+                scriptOwners.set(owner, []);
+            }
+            scriptOwners.get(owner).push(node.name);
+        });
+    });
+    
+    console.log('Node Analysis:');
+    console.log(`  Total nodes: ${nodes.length}`);
+    console.log(`  Volatile nodes: ${volatileNodes.length}`);
+    console.log(`  Global nodes: ${globalNodes.length}`);
+    console.log(`  Scripts involved: ${scriptOwners.size}`);
+    
+    // Analyze edge distribution
+    const edgeSources = new Map();
+    const edgeTargets = new Map();
+    
+    edges.forEach(([from, to, operations]) => {
+        edgeSources.set(from, (edgeSources.get(from) || 0) + 1);
+        edgeTargets.set(to, (edgeTargets.get(to) || 0) + 1);
+    });
+    
+    console.log('Edge Analysis:');
+    console.log(`  Total edges: ${edges.length}`);
+    console.log(`  Unique source nodes: ${edgeSources.size}`);
+    console.log(`  Unique target nodes: ${edgeTargets.size}`);
+    
+    // Find most connected nodes
+    const nodeConnections = new Map();
+    edges.forEach(([from, to]) => {
+        nodeConnections.set(from, (nodeConnections.get(from) || 0) + 1);
+        nodeConnections.set(to, (nodeConnections.get(to) || 0) + 1);
+    });
+    
+    const mostConnected = Array.from(nodeConnections.entries())
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 5);
+    
+    console.log('Most Connected Nodes:');
+    mostConnected.forEach(([nodeId, connections]) => {
+        const node = nodes.find(n => n.id === nodeId);
+        console.log(`  ${node ? node.name : nodeId}: ${connections} connections`);
+    });
+    
+    // Analyze script distribution
+    console.log('Script Distribution:');
+    Array.from(scriptOwners.entries()).forEach(([script, tables]) => {
+        console.log(`  ${script}: ${tables.length} tables`);
+    });
+    
+    console.log('=== END ALGORITHM ANALYSIS ===');
+    
+    return {
+        totalNodes: nodes.length,
+        volatileNodes: volatileNodes.length,
+        globalNodes: globalNodes.length,
+        totalEdges: edges.length,
+        scriptCount: scriptOwners.size,
+        mostConnectedNodes: mostConnected
+    };
 }
 
 function loadAllLineageFiles() {
@@ -2413,6 +2754,15 @@ function updateSelectedScriptLabel() {
         hasFilters = true;
     }
     
+    // Add connection mode
+    if (connectionMode !== 'direct') {
+        if (hasFilters) {
+            filterText += ', ';
+        }
+        filterText += `Mode: ${connectionMode}`;
+        hasFilters = true;
+    }
+    
     if (hasFilters) {
         labelDiv.textContent = filterText;
     } else {
@@ -2450,32 +2800,91 @@ function applyFilters(scriptFilters = [], tableFilters = [], mode = 'direct') {
             }
         });
         
-        if (mode === 'indirect') {
-            // Use breadth-first search to find all connected nodes in the chain
-            const visited = new Set();
-            const queue = Array.from(matchingNodeIds);
+        if (mode === 'impacts_by' || mode === 'impacted_by' || mode === 'both') {
+            // Step 1: Find all nodes that the selected nodes can reach (downstream)
+            const downstreamNodes = new Set();
+            const downstreamEdges = new Set();
             
-            while (queue.length > 0) {
-                const currentNodeId = queue.shift();
+            if (mode === 'impacts_by' || mode === 'both') {
+                const visited = new Set();
+                const queue = Array.from(matchingNodeIds);
                 
-                if (visited.has(currentNodeId)) {
-                    continue;
+                while (queue.length > 0) {
+                    const currentNodeId = queue.shift();
+                    
+                    if (visited.has(currentNodeId)) {
+                        continue;
+                    }
+                    
+                    visited.add(currentNodeId);
+                    downstreamNodes.add(currentNodeId);
+                    
+                    // Find all edges that start from this node (downstream)
+                    allEdges.forEach(([from, to, operations]) => {
+                        if (from === currentNodeId && !visited.has(to)) {
+                            queue.push(to);
+                            downstreamEdges.add(`${from}->${to}`);
+                        }
+                    });
                 }
+            }
+            
+            // Step 2: Find all nodes that can reach the selected nodes (upstream)
+            const upstreamNodes = new Set();
+            const upstreamEdges = new Set();
+            
+            if (mode === 'impacted_by' || mode === 'both') {
+                const visited = new Set();
+                const queue = Array.from(matchingNodeIds);
                 
-                visited.add(currentNodeId);
-                relatedNodeIds.add(currentNodeId);
-                
-                // Find all edges that connect to this node
-                allEdges.forEach(([from, to, operations]) => {
-                    if (from === currentNodeId && !visited.has(to)) {
-                        // Add target node to queue
-                        queue.push(to);
+                while (queue.length > 0) {
+                    const currentNodeId = queue.shift();
+                    
+                    if (visited.has(currentNodeId)) {
+                        continue;
                     }
-                    if (to === currentNodeId && !visited.has(from)) {
-                        // Add source node to queue
-                        queue.push(from);
-                    }
-                });
+                    
+                    visited.add(currentNodeId);
+                    upstreamNodes.add(currentNodeId);
+                    
+                    // Find all edges that end at this node (upstream)
+                    allEdges.forEach(([from, to, operations]) => {
+                        if (to === currentNodeId && !visited.has(from)) {
+                            queue.push(from);
+                            upstreamEdges.add(`${from}->${to}`);
+                        }
+                    });
+                }
+            }
+            
+            // Combine nodes based on mode
+            if (mode === 'impacts_by') {
+                downstreamNodes.forEach(nodeId => relatedNodeIds.add(nodeId));
+            } else if (mode === 'impacted_by') {
+                upstreamNodes.forEach(nodeId => relatedNodeIds.add(nodeId));
+            } else if (mode === 'both') {
+                downstreamNodes.forEach(nodeId => relatedNodeIds.add(nodeId));
+                upstreamNodes.forEach(nodeId => relatedNodeIds.add(nodeId));
+            }
+            
+            // Log the analysis for debugging
+            console.log('Graph analysis:', {
+                mode,
+                selectedNodes: Array.from(matchingNodeIds),
+                downstreamNodes: Array.from(downstreamNodes),
+                upstreamNodes: Array.from(upstreamNodes),
+                totalRelated: relatedNodeIds.size,
+                downstreamEdges: Array.from(downstreamEdges),
+                upstreamEdges: Array.from(upstreamEdges)
+            });
+            
+            // Additional debug info for each mode
+            if (mode === 'impacts_by') {
+                console.log(`Mode 'impacts_by': Showing ${downstreamNodes.size} nodes that the selected nodes can reach`);
+            } else if (mode === 'impacted_by') {
+                console.log(`Mode 'impacted_by': Showing ${upstreamNodes.size} nodes that can reach the selected nodes`);
+            } else if (mode === 'both') {
+                console.log(`Mode 'both': Showing ${downstreamNodes.size} downstream + ${upstreamNodes.size} upstream nodes`);
             }
         } else {
             // Direct mode: only add directly connected tables (sources and targets)
@@ -2775,10 +3184,10 @@ function initializeGlobalKeyboardHandlers() {
 // }
 
 function toggleConnectionMode() {
-    const checkbox = document.getElementById('directModeCheckbox');
+    const select = document.getElementById('connectionModeSelect');
     
-    // Update the connection mode based on checkbox state
-    connectionMode = checkbox.checked ? 'direct' : 'indirect';
+    // Update the connection mode based on dropdown selection
+    connectionMode = select.value;
     
     // Re-render the network with the new mode (will only recreate if filters changed)
     createNetworkVisualization(
@@ -2796,36 +3205,7 @@ function toggleLockView() {
     console.log('Lock view:', lockViewEnabled ? 'enabled' : 'disabled');
 }
 
-function initializeScriptSearchInputEvents() {
-    const input = document.getElementById('networkScriptSearchInput');
-    if (input) {
-        input.oninput = updateScriptAutocompleteDropdown;
-        input.onkeydown = function(e) {
-            if (e.key === 'Enter') {
-                if (selectedScriptAutocompleteIndex >= 0) {
-                    selectScriptAutocompleteItem(selectedScriptAutocompleteIndex);
-                } else {
-                    searchNetworkScript();
-                }
-                e.preventDefault();
-            } else if (e.key === 'ArrowUp') {
-                navigateScriptAutocomplete('up');
-                e.preventDefault();
-            } else if (e.key === 'ArrowDown') {
-                navigateScriptAutocomplete('down');
-                e.preventDefault();
-            } else if (e.key === 'Escape') {
-                hideScriptAutocompleteDropdown();
-                e.preventDefault();
-            }
-        };
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('#networkScriptSearchInput')) {
-                hideScriptAutocompleteDropdown();
-            }
-        });
-    }
-}
+// Removed duplicate initializeScriptSearchInputEvents function - functionality is now handled by initializeScriptAutocompleteEvents()
 
 // Fullscreen functionality
 let isFullscreen = false;
