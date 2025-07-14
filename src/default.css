@@ -729,6 +729,8 @@ body {
     margin-bottom: 10px;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(0, 0, 0, 0.1);
+    position: relative;
+    z-index: 1001;
 }
 
 /* Fullscreen mode styles */

@@ -537,6 +537,85 @@ class TestETLLineageAnalyzer:
                 filepath = os.path.join(output_dir, filename)
                 assert os.path.exists(filepath), f"Expected file {filename} was not created"
 
+    def test_create_view_handling(self):
+        """Test CREATE VIEW statement handling"""
+        sql_content = """
+        CREATE VIEW IF NOT EXISTS BIZT.BATCHCHARACTERISTICSDATA_V AS
+        SELECT *
+        FROM BIZT.BATCHCHARACTERISTICSDATA
+        """
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+            f.write(sql_content)
+            temp_file = f.name
+        
+        try:
+            lineage_info = self.analyzer.analyze_script(temp_file)
+            
+            assert isinstance(lineage_info, LineageInfo)
+            assert lineage_info.script_name == os.path.basename(temp_file)
+            
+            # Check that the view is identified as a target table
+            assert "BIZT.BATCHCHARACTERISTICSDATA_V" in lineage_info.target_tables
+            
+            # Check that the source table is identified
+            assert "BIZT.BATCHCHARACTERISTICSDATA" in lineage_info.source_tables
+            
+            # Check that there's one operation
+            assert len(lineage_info.operations) == 1
+            operation = lineage_info.operations[0]
+            assert operation.operation_type == "CREATE_VIEW"
+            assert operation.target_table == "BIZT.BATCHCHARACTERISTICSDATA_V"
+            assert "BIZT.BATCHCHARACTERISTICSDATA" in operation.source_tables
+            
+            # Check table relationships
+            assert "BIZT.BATCHCHARACTERISTICSDATA_V" in lineage_info.table_relationships
+            assert "BIZT.BATCHCHARACTERISTICSDATA" in lineage_info.table_relationships["BIZT.BATCHCHARACTERISTICSDATA_V"]
+            
+        finally:
+            os.unlink(temp_file)
+
+    def test_create_view_variations(self):
+        """Test different CREATE VIEW statement variations"""
+        test_cases = [
+            # Standard CREATE VIEW
+            ("CREATE VIEW schema.view_name AS SELECT * FROM table1", "schema.view_name", ["table1"]),
+            # CREATE VIEW with IF NOT EXISTS
+            ("CREATE VIEW IF NOT EXISTS view_name AS SELECT * FROM table1", "view_name", ["table1"]),
+            # CREATE VIEW with schema and IF NOT EXISTS
+            ("CREATE VIEW IF NOT EXISTS schema.view_name AS SELECT * FROM schema.table1", "schema.view_name", ["schema.table1"]),
+            # CREATE VIEW with multiple source tables
+            ("CREATE VIEW view_name AS SELECT * FROM table1 JOIN table2 ON table1.id = table2.id", "view_name", ["table1", "table2"]),
+        ]
+        
+        for sql_content, expected_target, expected_sources in test_cases:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+                f.write(sql_content)
+                temp_file = f.name
+            
+            try:
+                lineage_info = self.analyzer.analyze_script(temp_file)
+                
+                # Check that the view is identified as a target table
+                assert expected_target in lineage_info.target_tables
+                
+                # Check that all source tables are identified
+                for source in expected_sources:
+                    assert source in lineage_info.source_tables
+                
+                # Check that there's one operation
+                assert len(lineage_info.operations) == 1
+                operation = lineage_info.operations[0]
+                assert operation.operation_type == "CREATE_VIEW"
+                assert operation.target_table == expected_target
+                
+                # Check that all expected sources are in the operation
+                for source in expected_sources:
+                    assert source in operation.source_tables
+                
+            finally:
+                os.unlink(temp_file)
+
 
 class TestTableOperation:
     """Test cases for the TableOperation dataclass"""

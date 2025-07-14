@@ -20,103 +20,6 @@
       "target": [],
       "is_volatile": false
     },
-    "PRODUCT_DETAILS": {
-      "source": [
-        {
-          "name": "TEMP_SALES_DATA",
-          "operation": [
-            2
-          ]
-        }
-      ],
-      "target": [],
-      "is_volatile": false
-    },
-    "SALES_FACT": {
-      "source": [],
-      "target": [
-        {
-          "name": "TEMP_SALES_DATA",
-          "operation": [
-            0
-          ]
-        },
-        {
-          "name": "SALES_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "SALES_REPORTING": {
-      "source": [
-        {
-          "name": "SALES_FACT",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "REGION_DIM",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "SALES_CHANNEL_DIM",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "CATEGORY_REF",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "TEMP_SALES_DATA",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "target": [
-        {
-          "name": "ETL_AUDIT_LOG",
-          "operation": [
-            4
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "REGION_DIM": {
-      "source": [],
-      "target": [
-        {
-          "name": "SALES_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "SALES_CHANNEL_DIM": {
-      "source": [],
-      "target": [
-        {
-          "name": "SALES_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
     "CATEGORY_REF": {
       "source": [],
       "target": [
@@ -141,16 +44,83 @@
       ],
       "is_volatile": false
     },
+    "SALES_REPORTING": {
+      "source": [
+        {
+          "name": "CATEGORY_REF",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SALES_CHANNEL_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SALES_FACT",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "REGION_DIM",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "ETL_AUDIT_LOG",
+          "operation": [
+            4
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "SALES_CHANNEL_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "PRODUCT_DETAILS": {
+      "source": [
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            2
+          ]
+        }
+      ],
+      "target": [],
+      "is_volatile": false
+    },
     "PRODUCT_SUMMARY": {
       "source": [
         {
-          "name": "PRODUCT_SUMMARY",
+          "name": "TEMP_SALES_DATA",
           "operation": [
             1
           ]
         },
         {
-          "name": "TEMP_SALES_DATA",
+          "name": "PRODUCT_SUMMARY",
           "operation": [
             1
           ]
@@ -202,6 +172,37 @@
         }
       ],
       "is_volatile": true
+    },
+    "SALES_FACT": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_SALES_DATA",
+          "operation": [
+            0
+          ]
+        },
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "REGION_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "SALES_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
     }
-  }
+  },
+  "warnings": []
 }

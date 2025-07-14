@@ -143,6 +143,7 @@ class ETLLineageAnalyzer:
         # Patterns for different SQL operations
         self.patterns = {
             "create_volatile": r"CREATE\s+(?:MULTISET\s+)?VOLATILE\s+TABLE\s+(\w+)\s+AS\s*\(",
+            "create_view": r"CREATE\s+(?:VIEW\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([\w\.]+)\s+AS",
             "insert": r"INSERT\s+INTO\s+([\w\.]+)\s*\(",
             "update": r"UPDATE\s+([\w\.]+)\s+FROM\s+([\w\.]+)",
             "select_from": r"FROM\s+([\w\.]+)",
@@ -598,6 +599,25 @@ class ETLLineageAnalyzer:
                 sql_statement=statement,
             )
 
+        # CREATE VIEW
+        create_view_match = re.search(
+            r"CREATE\s+(?:VIEW\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([\w\.]+)\s+AS",
+            statement,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if create_view_match:
+            view_name = create_view_match.group(1)
+            source_tables = self._extract_source_tables_from_select(statement, warnings)
+            return TableOperation(
+                operation_type="CREATE_VIEW",
+                target_table=view_name,
+                source_tables=source_tables,
+                columns=[],
+                conditions=[],
+                line_number=line_number,
+                sql_statement=statement,
+            )
+
         # INSERT INTO
         insert_match = re.search(r"INSERT\s+INTO\s+([\w\.]+)", statement, re.IGNORECASE)
         if insert_match:
@@ -827,6 +847,15 @@ class ETLLineageAnalyzer:
                 r"\)\s*WITH\s+DATA.*$", "", select_part, flags=re.IGNORECASE | re.DOTALL
             )
 
+        # For CREATE VIEW, we need to extract tables from the SELECT part
+        create_view_match = re.search(
+            r"CREATE\s+(?:VIEW\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[\w\.]+\s+AS\s*(.*)",
+            statement,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if create_view_match:
+            select_part = create_view_match.group(1)
+
         return self._extract_all_source_tables(select_part, warnings)
 
     def _extract_source_tables_from_update(self, statement: str, warnings: List[str] = None) -> List[str]:
@@ -865,6 +894,9 @@ class ETLLineageAnalyzer:
         for operation in operations:
             if operation.operation_type == "CREATE_VOLATILE":
                 volatile_tables.append(operation.target_table)
+                target_tables.add(operation.target_table)
+                source_tables.update(operation.source_tables)
+            elif operation.operation_type == "CREATE_VIEW":
                 target_tables.add(operation.target_table)
                 source_tables.update(operation.source_tables)
             elif operation.operation_type in ["INSERT", "UPDATE"]:

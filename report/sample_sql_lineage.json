@@ -8,144 +8,16 @@
     "INSERT INTO ETL_AUDIT_LOG (process_name, TABLE_NAME, record_count, process_date, status)\nSELECT 'CUSTOMER_ETL' AS process_name,\n       'CUSTOMER_REPORTING' AS TABLE_NAME,\n       COUNT(*) AS record_count,\n       CURRENT_DATE AS process_date,\n                       'COMPLETED' AS status\nFROM CUSTOMER_REPORTING\nWHERE report_date = CURRENT_DATE;"
   ],
   "tables": {
-    "CUSTOMER_SUMMARY": {
-      "source": [
-        {
-          "name": "CUSTOMER_SUMMARY",
-          "operation": [
-            1
-          ]
-        },
-        {
-          "name": "TEMP_CUSTOMER_DATA",
-          "operation": [
-            1
-          ]
-        }
-      ],
-      "target": [
-        {
-          "name": "CUSTOMER_SUMMARY",
-          "operation": [
-            1
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "CUSTOMER_REPORTING": {
-      "source": [
-        {
-          "name": "REGION_DIM",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "SEGMENT_REF",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "SALES_REP_DIM",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "TEMP_CUSTOMER_DATA",
-          "operation": [
-            3
-          ]
-        },
-        {
-          "name": "ORDER_FACT",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "target": [
-        {
-          "name": "ETL_AUDIT_LOG",
-          "operation": [
-            4
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "ETL_AUDIT_LOG": {
-      "source": [
-        {
-          "name": "CUSTOMER_REPORTING",
-          "operation": [
-            4
-          ]
-        }
-      ],
-      "target": [],
-      "is_volatile": false
-    },
-    "REGION_DIM": {
-      "source": [],
-      "target": [
-        {
-          "name": "CUSTOMER_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "SEGMENT_REF": {
-      "source": [],
-      "target": [
-        {
-          "name": "CUSTOMER_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "SALES_REP_DIM": {
-      "source": [],
-      "target": [
-        {
-          "name": "CUSTOMER_REPORTING",
-          "operation": [
-            3
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
-    "CUSTOMER_DETAILS": {
-      "source": [
-        {
-          "name": "TEMP_CUSTOMER_DATA",
-          "operation": [
-            2
-          ]
-        }
-      ],
-      "target": [],
-      "is_volatile": false
-    },
     "TEMP_CUSTOMER_DATA": {
       "source": [
         {
-          "name": "CUSTOMER_DIM",
+          "name": "ORDER_FACT",
           "operation": [
             0
           ]
         },
         {
-          "name": "ORDER_FACT",
+          "name": "CUSTOMER_DIM",
           "operation": [
             0
           ]
@@ -173,18 +45,6 @@
       ],
       "is_volatile": true
     },
-    "CUSTOMER_DIM": {
-      "source": [],
-      "target": [
-        {
-          "name": "TEMP_CUSTOMER_DATA",
-          "operation": [
-            0
-          ]
-        }
-      ],
-      "is_volatile": false
-    },
     "ORDER_FACT": {
       "source": [],
       "target": [
@@ -202,6 +62,147 @@
         }
       ],
       "is_volatile": false
+    },
+    "ETL_AUDIT_LOG": {
+      "source": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            4
+          ]
+        }
+      ],
+      "target": [],
+      "is_volatile": false
+    },
+    "SALES_REP_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "CUSTOMER_DETAILS": {
+      "source": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            2
+          ]
+        }
+      ],
+      "target": [],
+      "is_volatile": false
+    },
+    "CUSTOMER_REPORTING": {
+      "source": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "ORDER_FACT",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SALES_REP_DIM",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "SEGMENT_REF",
+          "operation": [
+            3
+          ]
+        },
+        {
+          "name": "REGION_DIM",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "ETL_AUDIT_LOG",
+          "operation": [
+            4
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "CUSTOMER_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "SEGMENT_REF": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "CUSTOMER_SUMMARY": {
+      "source": [
+        {
+          "name": "TEMP_CUSTOMER_DATA",
+          "operation": [
+            1
+          ]
+        },
+        {
+          "name": "CUSTOMER_SUMMARY",
+          "operation": [
+            1
+          ]
+        }
+      ],
+      "target": [
+        {
+          "name": "CUSTOMER_SUMMARY",
+          "operation": [
+            1
+          ]
+        }
+      ],
+      "is_volatile": false
+    },
+    "REGION_DIM": {
+      "source": [],
+      "target": [
+        {
+          "name": "CUSTOMER_REPORTING",
+          "operation": [
+            3
+          ]
+        }
+      ],
+      "is_volatile": false
     }
-  }
+  },
+  "warnings": []
 }

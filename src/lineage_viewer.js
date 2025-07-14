@@ -2476,18 +2476,6 @@ function clearNetworkScriptSearch() {
     createNetworkVisualization([], []);
 }
 
-// Allow pressing Enter in the script search input to trigger search
-window.addEventListener('DOMContentLoaded', function() {
-    const input = document.getElementById('networkScriptSearchInput');
-    if (input) {
-        input.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                searchNetworkScript();
-                e.preventDefault();
-            }
-        });
-    }
-});
 
 // --- Script autocomplete state ---
 let allScriptNames = [];
@@ -2544,7 +2532,9 @@ function selectScriptAutocompleteItem(index) {
         const selectedScript = filteredScriptNames[index];
         document.getElementById('networkScriptSearchInput').value = selectedScript;
         hideScriptAutocompleteDropdown();
-        searchNetworkScript();
+        showFileNetwork(selectedScript);
+    } else {
+        console.log('Invalid index or no filtered scripts available');
     }
 }
 
@@ -2560,31 +2550,6 @@ function navigateScriptAutocomplete(direction) {
 
 // --- Script search input events ---
 window.addEventListener('DOMContentLoaded', function() {
-    const scriptInput = document.getElementById('networkScriptSearchInput');
-    if (scriptInput) {
-        scriptInput.addEventListener('input', function() {
-            updateScriptAutocompleteDropdown();
-        });
-        scriptInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                if (selectedScriptAutocompleteIndex >= 0) {
-                    selectScriptAutocompleteItem(selectedScriptAutocompleteIndex);
-                } else {
-                    searchNetworkScript();
-                }
-                e.preventDefault();
-            } else if (e.key === 'ArrowUp') {
-                navigateScriptAutocomplete('up');
-                e.preventDefault();
-            } else if (e.key === 'ArrowDown') {
-                navigateScriptAutocomplete('down');
-                e.preventDefault();
-            } else if (e.key === 'Escape') {
-                hideScriptAutocompleteDropdown();
-                e.preventDefault();
-            }
-        });
-    }
     // Attach a single click listener for hiding both dropdowns
     document.addEventListener('click', function(e) {
         // Hide script autocomplete if click is outside its container
@@ -2761,10 +2726,18 @@ function calculateNetworkStatistics() {
         return !hasIncomingEdges;
     });
     
-    // Find final target tables (tables with no outgoing edges)
+    // Find final target tables (tables with no outgoing edges or only self-referencing edges)
     const finalTargetTables = filteredNodes.filter(node => {
-        const hasOutgoingEdges = filteredEdges.some(([from, to]) => from === node.id);
-        return !hasOutgoingEdges;
+        const outgoingEdges = filteredEdges.filter(([from, to]) => from === node.id);
+        
+        // If no outgoing edges, it's a final table
+        if (outgoingEdges.length === 0) {
+            return true;
+        }
+        
+        // If all outgoing edges are self-referencing (from === to), it's a final table
+        const hasOnlySelfReferences = outgoingEdges.every(([from, to]) => from === to);
+        return hasOnlySelfReferences;
     });
     
     // Find unused volatile tables (volatile tables with no targets)
@@ -2878,9 +2851,9 @@ function displayNetworkStatistics(stats, filteredNodes) {
             </div>
             
             <div class="stat-card">
-                <h4>Final Targets</h4>
+                <h4>Final Tables</h4>
                 <div class="stat-number">${stats.finalTargetTables}</div>
-                <div class="stat-description">Tables with no outgoing data</div>
+                <div class="stat-description">Tables with no outgoing data or only self-references</div>
             </div>
             
             <div class="stat-card">
@@ -2983,9 +2956,9 @@ function displayNetworkStatistics(stats, filteredNodes) {
     if (stats.finalTargetTableDetails.length > 0) {
         html += `
             <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin-top: 20px;">
-                <h4 style="color: #495057; margin-bottom: 15px;">📤 Final Target Tables (${stats.finalTargetTableDetails.length})</h4>
+                <h4 style="color: #495057; margin-bottom: 15px;">📤 Final Tables (${stats.finalTargetTableDetails.length})</h4>
                 <p style="color: #6c757d; margin-bottom: 15px; font-size: 0.9em;">
-                    Tables that receive data but don't provide data to other tables.
+                    Tables that receive data but don't provide data to other tables, or only reference themselves.
                 </p>
                 ${stats.finalTargetTableDetails.map(table => `
                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
