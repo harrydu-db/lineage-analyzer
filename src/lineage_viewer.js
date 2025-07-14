@@ -1739,12 +1739,15 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     // Create vis.js nodes
     const visNodes = filteredNodes.map(node => {
         const nodeColor = getNodeColor(node);
-        const nodeSize = 20 + Math.min((node.source?.length || 0) + (node.target?.length || 0), 10) * 2;
+        // Count outgoing and incoming edges for this node in the current filteredEdges
+        const outgoingEdgeCount = filteredEdges.filter(([from, to]) => from === node.id).length;
+        const incomingEdgeCount = filteredEdges.filter(([from, to]) => to === node.id).length;
+        const nodeSize = 20 + Math.min(incomingEdgeCount + outgoingEdgeCount, 10) * 2;
         
         return {
             id: node.id,
             label: node.name,
-            title: `${node.name}\nSources: ${node.source.length}\nTargets: ${node.target.length}\nVolatile: ${node.is_volatile ? 'Yes' : 'No'}\nOwners: ${node.owners.join(', ')}`,
+            title: `${node.name}\nSources: ${incomingEdgeCount}\nTargets: ${outgoingEdgeCount}\nVolatile: ${node.is_volatile ? 'Yes' : 'No'}\nOwners: ${node.owners.join(', ')}`,
             color: nodeColor,
             size: nodeSize,
             font: {
