@@ -1817,11 +1817,26 @@ function switchTab(tabName) {
     }
 }
 
+// Helper function to filter out self-referencing edges
+function filterNonSelfReferencingEdges(edges) {
+    return edges.filter(([from, to]) => from !== to);
+}
+
+// Helper function to get outgoing edges for a node (excluding self-references)
+function getOutgoingEdges(nodeId, edges) {
+    return edges.filter(([from, to]) => from === nodeId && from !== to);
+}
+
+// Helper function to get incoming edges for a node (excluding self-references)
+function getIncomingEdges(nodeId, edges) {
+    return edges.filter(([from, to]) => to === nodeId && from !== to);
+}
+
 // Helper function to determine node color based on edge relationships and volatility
 function getNodeColor(node, filteredEdges = []) {
     // Calculate source and target counts based on the current filtered edges
-    const outgoingEdgeCount = filteredEdges.filter(([from, to]) => from === node.id).length;
-    const incomingEdgeCount = filteredEdges.filter(([from, to]) => to === node.id).length;
+    const outgoingEdgeCount = getOutgoingEdges(node.id, filteredEdges).length;
+    const incomingEdgeCount = getIncomingEdges(node.id, filteredEdges).length;
     
     if (node.is_volatile) {
         return '#ff9800'; // Orange for volatile tables
@@ -1865,8 +1880,8 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     const visNodes = filteredNodes.map(node => {
         const nodeColor = getNodeColor(node, filteredEdges);
         // Count outgoing and incoming edges for this node in the current filteredEdges
-        const outgoingEdgeCount = filteredEdges.filter(([from, to]) => from === node.id).length;
-        const incomingEdgeCount = filteredEdges.filter(([from, to]) => to === node.id).length;
+        const outgoingEdgeCount = getOutgoingEdges(node.id, filteredEdges).length;
+        const incomingEdgeCount = getIncomingEdges(node.id, filteredEdges).length;
         const nodeSize = 20 + Math.min(incomingEdgeCount + outgoingEdgeCount, 10) * 2;
         
         return {
@@ -3380,13 +3395,13 @@ function calculateNetworkStatistics() {
     
     // Find source tables (tables with no incoming edges)
     const sourceTables = filteredNodes.filter(node => {
-        const hasIncomingEdges = filteredEdges.some(([from, to]) => to === node.id);
+        const hasIncomingEdges = getIncomingEdges(node.id, filteredEdges).length > 0;
         return !hasIncomingEdges;
     });
     
     // Find final target tables (tables with no outgoing edges or only self-referencing edges)
     const finalTargetTables = filteredNodes.filter(node => {
-        const outgoingEdges = filteredEdges.filter(([from, to]) => from === node.id);
+        const outgoingEdges = getOutgoingEdges(node.id, filteredEdges);
         
         // If no outgoing edges, it's a final table
         if (outgoingEdges.length === 0) {
@@ -3401,7 +3416,7 @@ function calculateNetworkStatistics() {
     // Find unused volatile tables (volatile tables with no targets)
     const unusedVolatileTables = filteredNodes.filter(node => {
         if (!node.is_volatile) return false;
-        const hasOutgoingEdges = filteredEdges.some(([from, to]) => from === node.id);
+        const hasOutgoingEdges = getOutgoingEdges(node.id, filteredEdges).length > 0;
         return !hasOutgoingEdges;
     });
     
@@ -3410,7 +3425,9 @@ function calculateNetworkStatistics() {
     const globalTables = filteredNodes.filter(node => !node.is_volatile);
     
     // Calculate average connections
-    const totalConnections = filteredEdges.length * 2; // Each edge connects 2 nodes
+    // Exclude self-referencing edges from connection count
+    const nonSelfReferencingEdges = filterNonSelfReferencingEdges(filteredEdges);
+    const totalConnections = nonSelfReferencingEdges.length * 2; // Each edge connects 2 nodes
     const avgConnections = totalTables > 0 ? (totalConnections / totalTables).toFixed(1) : 0;
     
     // Find most connected tables
@@ -3419,7 +3436,7 @@ function calculateNetworkStatistics() {
         nodeConnections[node.id] = 0;
     });
     
-    filteredEdges.forEach(([from, to]) => {
+    filterNonSelfReferencingEdges(filteredEdges).forEach(([from, to]) => {
         nodeConnections[from] = (nodeConnections[from] || 0) + 1;
         nodeConnections[to] = (nodeConnections[to] || 0) + 1;
     });
