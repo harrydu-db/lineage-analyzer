@@ -2330,7 +2330,7 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
             if (level !== undefined) {
                 node.x = level.x;
                 node.y = level.y;
-                node.fixed = true; // Fix position for hierarchical layout
+                // Allow dragging in Flow View by not fixing node positions
             }
         });
         
