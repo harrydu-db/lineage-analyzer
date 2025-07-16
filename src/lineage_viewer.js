@@ -664,6 +664,63 @@ function buildOwnershipModel() {
 
 
 
+// Calculate node levels for hierarchical layout based on data flow
+function calculateNodeLevels(nodes, edges) {
+    const nodeLevels = {};
+    const nodeMap = new Map(nodes.map(node => [node.id, node]));
+    
+    // Find source nodes (nodes with no incoming edges)
+    const sourceNodes = nodes.filter(node => {
+        return !edges.some(([from, to]) => to === node.id);
+    });
+    
+    // Initialize levels for source nodes
+    sourceNodes.forEach(node => {
+        nodeLevels[node.id] = 0;
+    });
+    
+    // Use topological sort to assign levels
+    const visited = new Set();
+    const queue = [...sourceNodes];
+    
+    while (queue.length > 0) {
+        const currentNode = queue.shift();
+        
+        if (visited.has(currentNode.id)) {
+            continue;
+        }
+        
+        visited.add(currentNode.id);
+        const currentLevel = nodeLevels[currentNode.id] || 0;
+        
+        // Find all outgoing edges from this node
+        const outgoingEdges = edges.filter(([from, to]) => from === currentNode.id);
+        
+        outgoingEdges.forEach(([from, to]) => {
+            const targetNode = nodeMap.get(to);
+            if (targetNode) {
+                // Set level for target node (one level deeper)
+                const targetLevel = Math.max(nodeLevels[to] || 0, currentLevel + 1);
+                nodeLevels[to] = targetLevel;
+                
+                // Add to queue if not visited
+                if (!visited.has(to)) {
+                    queue.push(targetNode);
+                }
+            }
+        });
+    }
+    
+    // Handle any remaining nodes (cycles or isolated nodes)
+    nodes.forEach(node => {
+        if (!(node.id in nodeLevels)) {
+            nodeLevels[node.id] = 0;
+        }
+    });
+    
+    return nodeLevels;
+}
+
 // Helper function to convert operation indices to script names with local indices
 function getOperationDisplayText(operations) {
     // operations: Array of strings like "CAMSTAR_LOT_BONUS.sh::op4"
@@ -1761,13 +1818,17 @@ function switchTab(tabName) {
 }
 
 // Helper function to determine node color based on edge relationships and volatility
-function getNodeColor(table) {
-    if (table.is_volatile) {
-        return '#ff9800'; // Yellow for volatile tables
-    } else if (table.source.length === 0) {
-        return '#28a745'; // Green for tables with no in-edges (no sources)
-    } else if (table.target.length === 0) {
-        return '#dc3545'; // Red for tables with no out-edges (no targets)
+function getNodeColor(node, filteredEdges = []) {
+    // Calculate source and target counts based on the current filtered edges
+    const outgoingEdgeCount = filteredEdges.filter(([from, to]) => from === node.id).length;
+    const incomingEdgeCount = filteredEdges.filter(([from, to]) => to === node.id).length;
+    
+    if (node.is_volatile) {
+        return '#ff9800'; // Orange for volatile tables
+    } else if (incomingEdgeCount === 0) {
+        return '#28a745'; // Green for tables with no sources (no incoming edges)
+    } else if (outgoingEdgeCount === 0) {
+        return '#dc3545'; // Red for tables with no targets (no outgoing edges)
     } else {
         return '#007bff'; // Blue for all other tables
     }
@@ -1797,9 +1858,12 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     // Apply filters to get filtered data
     const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters, connectionMode);
     
+    // Calculate node levels for hierarchical layout
+    const nodeLevels = calculateNodeLevels(filteredNodes, filteredEdges);
+    
     // Create vis.js nodes
     const visNodes = filteredNodes.map(node => {
-        const nodeColor = getNodeColor(node);
+        const nodeColor = getNodeColor(node, filteredEdges);
         // Count outgoing and incoming edges for this node in the current filteredEdges
         const outgoingEdgeCount = filteredEdges.filter(([from, to]) => from === node.id).length;
         const incomingEdgeCount = filteredEdges.filter(([from, to]) => to === node.id).length;
@@ -1884,10 +1948,10 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
             hover: true,
             tooltipDelay: 200,
             zoomView: true,
-            dragView: true
-        },
-        layout: {
-            improvedLayout: true
+            dragView: true,
+            dragNodes: true,
+            selectable: true,
+            selectConnectedEdges: true
         }
     };
     
@@ -1896,6 +1960,20 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     }
     
     network = new vis.Network(container, data, options);
+    
+    // Physics is disabled to prevent animation
+    network.on('stabilizationProgress', function(params) {
+        // Physics is disabled
+    });
+    
+    network.on('stabilizationIterationsDone', function(params) {
+        // Physics remains disabled
+        network.setOptions({
+            physics: {
+                enabled: false
+            }
+        });
+    });
     
     // Add click events for nodes and edges
     network.on('click', function(params) {
