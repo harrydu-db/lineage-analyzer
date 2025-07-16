@@ -931,3 +931,79 @@ body {
     color: #1976d2;
     font-weight: bold;
 }
+
+/* Zoom buttons for network view */
+.zoom-buttons {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.zoom-btn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 123, 255, 0.9);
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    user-select: none;
+}
+
+.zoom-btn:hover {
+    background: rgba(0, 123, 255, 1);
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.zoom-btn:active {
+    transform: scale(0.95);
+}
+
+.zoom-in-btn {
+    background: rgba(40, 167, 69, 0.9);
+}
+
+.zoom-in-btn:hover {
+    background: rgba(40, 167, 69, 1);
+}
+
+.zoom-out-btn {
+    background: rgba(255, 193, 7, 0.9);
+}
+
+.zoom-out-btn:hover {
+    background: rgba(255, 193, 7, 1);
+}
+
+.zoom-reset-btn {
+    background: rgba(108, 117, 125, 0.9);
+}
+
+.zoom-reset-btn:hover {
+    background: rgba(108, 117, 125, 1);
+}
+
+/* Ensure network container has relative positioning for absolute zoom buttons */
+#networkContainer {
+    position: relative;
+}
+
+/* Show zoom buttons in fullscreen mode with adjusted positioning */
+.network-fullscreen-container.fullscreen .zoom-buttons {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 10001;
+}

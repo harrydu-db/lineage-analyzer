@@ -2354,6 +2354,9 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     
     network = new vis.Network(container, data, options);
     
+    // Add zoom buttons after network is created
+    addZoomButtons();
+    
     // Physics is disabled to prevent animation
     network.on('stabilizationProgress', function(params) {
         // Physics is disabled
@@ -3559,6 +3562,9 @@ window.addEventListener('DOMContentLoaded', function() {
     
     // Initialize global keyboard handlers
     initializeGlobalKeyboardHandlers();
+    
+    // Initialize zoom keyboard shortcuts
+    initializeZoomKeyboardShortcuts();
 });
 
 function initializeTableAutocompleteEvents() {
@@ -3720,6 +3726,8 @@ function toggleFullscreen() {
         // Recreate network to fit new container size
         setTimeout(() => {
             forceNetworkRecreation();
+            // Ensure zoom buttons are added after network recreation
+            addZoomButtons();
         }, 100);
         
         // Add escape key listener
@@ -3735,6 +3743,8 @@ function toggleFullscreen() {
         // Recreate network to fit original container size
         setTimeout(() => {
             forceNetworkRecreation();
+            // Ensure zoom buttons are added after network recreation
+            addZoomButtons();
         }, 100);
         
         // Remove escape key listener
@@ -4215,4 +4225,87 @@ function toggleStatsSection(sectionId) {
             toggle.textContent = '▶';
         }
     }
+}
+
+// Add zoom functionality for network view
+function zoomIn() {
+    if (network) {
+        const currentScale = network.getScale();
+        const newScale = Math.min(currentScale * 1.2, 5.0); // Max zoom of 5x
+        network.moveTo({ scale: newScale });
+    }
+}
+
+function zoomOut() {
+    if (network) {
+        const currentScale = network.getScale();
+        const newScale = Math.max(currentScale / 1.2, 0.1); // Min zoom of 0.1x
+        network.moveTo({ scale: newScale });
+    }
+}
+
+function resetZoom() {
+    if (network) {
+        network.fit();
+    }
+}
+
+// Add zoom buttons to the network container
+function addZoomButtons() {
+    const container = document.getElementById('networkContainer');
+    if (!container) return;
+    
+    // Remove existing zoom buttons if they exist
+    const existingZoomButtons = container.querySelector('.zoom-buttons');
+    if (existingZoomButtons) {
+        existingZoomButtons.remove();
+    }
+    
+    // Create zoom buttons container
+    const zoomButtonsContainer = document.createElement('div');
+    zoomButtonsContainer.className = 'zoom-buttons';
+    zoomButtonsContainer.innerHTML = `
+        <button class="zoom-btn zoom-in-btn" onclick="zoomIn()" title="Zoom In (Ctrl + +)">
+            <span>+</span>
+        </button>
+        <button class="zoom-btn zoom-out-btn" onclick="zoomOut()" title="Zoom Out (Ctrl + -)">
+            <span>−</span>
+        </button>
+        <button class="zoom-btn zoom-reset-btn" onclick="resetZoom()" title="Reset Zoom (Ctrl + 0)">
+            <span>⌂</span>
+        </button>
+    `;
+    
+    // Add zoom buttons to the network container
+    container.appendChild(zoomButtonsContainer);
+}
+
+// Add keyboard shortcuts for zoom
+function initializeZoomKeyboardShortcuts() {
+    document.addEventListener('keydown', function(event) {
+        // Only handle zoom shortcuts when network tab is active
+        const networkTab = document.getElementById('networkTab');
+        if (!networkTab || !networkTab.classList.contains('active')) {
+            return;
+        }
+        
+        // Check if Ctrl/Cmd is pressed
+        if (event.ctrlKey || event.metaKey) {
+            switch (event.key) {
+                case '=':
+                case '+':
+                    event.preventDefault();
+                    zoomIn();
+                    break;
+                case '-':
+                    event.preventDefault();
+                    zoomOut();
+                    break;
+                case '0':
+                    event.preventDefault();
+                    resetZoom();
+                    break;
+            }
+        }
+    });
 }
