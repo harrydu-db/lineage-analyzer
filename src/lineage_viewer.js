@@ -12,6 +12,8 @@ let connectionMode = 'direct';
 let lockViewEnabled = false;
 // Track the last applied filters to avoid unnecessary network recreation
 let lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
+// Track the flow view state for hierarchical layout
+let flowViewEnabled = false;
 
 // Global data structures for proper ownership modeling
 let allNodes = {};
@@ -32,6 +34,7 @@ function resetNetworkData() {
     selectedTableFilters = [];
     connectionMode = 'direct';
     lockViewEnabled = false;
+    flowViewEnabled = false;
     lastNetworkFilters = { scriptFilters: [], tableFilters: [], mode: 'direct' };
     
     // Reset ownership model data
@@ -71,6 +74,12 @@ function resetNetworkData() {
     const tableSearchInput = document.getElementById('networkNodeSearchInput');
     if (tableSearchInput) {
         tableSearchInput.value = '';
+    }
+    
+    // Reset flow view checkbox
+    const flowViewCheckbox = document.getElementById('flowViewCheckbox');
+    if (flowViewCheckbox) {
+        flowViewCheckbox.checked = false;
     }
     
     // Hide any open dropdowns
@@ -664,22 +673,31 @@ function buildOwnershipModel() {
 
 
 
-// Calculate node levels for hierarchical layout based on data flow
-function calculateNodeLevels(nodes, edges) {
-    const nodeLevels = {};
+
+
+// Calculate optimized levels for better horizontal layout
+function calculateOptimizedLevels(nodes, edges) {
+    const optimizedLevels = {};
     const nodeMap = new Map(nodes.map(node => [node.id, node]));
     
-    // Find source nodes (nodes with no incoming edges)
-    const sourceNodes = nodes.filter(node => {
-        return !edges.some(([from, to]) => to === node.id);
+    // Calculate edge counts for all nodes
+    const outgoingEdgeCounts = {};
+    const incomingEdgeCounts = {};
+    
+    nodes.forEach(node => {
+        outgoingEdgeCounts[node.id] = getOutgoingEdges(node.id, edges).length;
+        incomingEdgeCounts[node.id] = getIncomingEdges(node.id, edges).length;
     });
+    
+    // Find source nodes (nodes with no incoming edges)
+    const sourceNodes = nodes.filter(node => incomingEdgeCounts[node.id] === 0);
     
     // Initialize levels for source nodes
     sourceNodes.forEach(node => {
-        nodeLevels[node.id] = 0;
+        optimizedLevels[node.id] = 0;
     });
     
-    // Use topological sort to assign levels
+    // Use topological sort with optimization for horizontal layout
     const visited = new Set();
     const queue = [...sourceNodes];
     
@@ -691,7 +709,7 @@ function calculateNodeLevels(nodes, edges) {
         }
         
         visited.add(currentNode.id);
-        const currentLevel = nodeLevels[currentNode.id] || 0;
+        const currentLevel = optimizedLevels[currentNode.id] || 0;
         
         // Find all outgoing edges from this node
         const outgoingEdges = edges.filter(([from, to]) => from === currentNode.id);
@@ -699,9 +717,9 @@ function calculateNodeLevels(nodes, edges) {
         outgoingEdges.forEach(([from, to]) => {
             const targetNode = nodeMap.get(to);
             if (targetNode) {
-                // Set level for target node (one level deeper)
-                const targetLevel = Math.max(nodeLevels[to] || 0, currentLevel + 1);
-                nodeLevels[to] = targetLevel;
+                // Calculate target level based on data flow
+                const targetLevel = Math.max(optimizedLevels[to] || 0, currentLevel + 1);
+                optimizedLevels[to] = targetLevel;
                 
                 // Add to queue if not visited
                 if (!visited.has(to)) {
@@ -713,12 +731,346 @@ function calculateNodeLevels(nodes, edges) {
     
     // Handle any remaining nodes (cycles or isolated nodes)
     nodes.forEach(node => {
-        if (!(node.id in nodeLevels)) {
-            nodeLevels[node.id] = 0;
+        if (!(node.id in optimizedLevels)) {
+            optimizedLevels[node.id] = 0;
         }
     });
     
-    return nodeLevels;
+    // Separate red nodes (final targets) into their own levels
+    // Red nodes should be positioned in the deepest/highest levels
+    const redNodes = nodes.filter(node => getOutgoingEdges(node.id, edges).length === 0);
+    const nonRedNodes = nodes.filter(node => getOutgoingEdges(node.id, edges).length > 0);
+    
+    // Find the maximum level for non-red nodes
+    let maxNonRedLevel = 0;
+    nonRedNodes.forEach(node => {
+        maxNonRedLevel = Math.max(maxNonRedLevel, optimizedLevels[node.id] || 0);
+    });
+    
+    // Position red nodes in levels after the maximum non-red level
+    redNodes.forEach(node => {
+        optimizedLevels[node.id] = maxNonRedLevel + 1;
+    });
+    
+    // Group nodes by optimized level
+    const levelGroups = {};
+    nodes.forEach(node => {
+        const level = optimizedLevels[node.id];
+        if (!levelGroups[level]) {
+            levelGroups[level] = [];
+        }
+        levelGroups[level].push(node);
+    });
+    
+    // Create final optimized level map
+    const sortedLevels = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
+    const optimizedLevelMap = {};
+    
+    sortedLevels.forEach((level, index) => {
+        const nodesInLevel = levelGroups[level];
+        nodesInLevel.forEach(node => {
+            optimizedLevelMap[node.id] = index;
+        });
+    });
+    
+    console.log('Optimized levels:', optimizedLevelMap);
+    console.log(`Red nodes positioned in level ${maxNonRedLevel + 1} (after non-red nodes)`);
+    console.log(`Red nodes: ${redNodes.map(n => n.name).join(', ')}`);
+    return optimizedLevelMap;
+}
+
+// Calculate hierarchical levels with color-based separation for flow view
+function calculateHierarchicalLevelsWithColorSeparation(nodes, edges) {
+    const hierarchicalLevels = {};
+    const nodeMap = new Map(nodes.map(node => [node.id, node]));
+    
+    // Calculate optimized levels based on actual data flow
+    const optimizedLevels = calculateOptimizedLevels(nodes, edges);
+    
+    // Group nodes by optimized level
+    const levelGroups = {};
+    nodes.forEach(node => {
+        const level = optimizedLevels[node.id];
+        if (!levelGroups[level]) {
+            levelGroups[level] = [];
+        }
+        levelGroups[level].push(node);
+    });
+    
+    // Calculate positions for each level with color separation
+    const levelSpacing = 200; // Reduced horizontal spacing between levels
+    const nodeSpacing = 150; // Vertical spacing between nodes
+    const columnWidth = 150; // Reduced width between columns for tighter layout
+    
+    Object.keys(levelGroups).forEach(levelStr => {
+        const level = parseInt(levelStr);
+        const nodesInLevel = levelGroups[level];
+        
+        // Separate nodes by color based on their role in the data flow
+        const outgoingEdgeCounts = {};
+        const incomingEdgeCounts = {};
+        
+        // Calculate edge counts for each node in this level
+        nodesInLevel.forEach(node => {
+            outgoingEdgeCounts[node.id] = getOutgoingEdges(node.id, edges).length;
+            incomingEdgeCounts[node.id] = getIncomingEdges(node.id, edges).length;
+        });
+        
+        // Separate nodes by their color classification
+        // Red nodes (no targets) will be positioned rightmost
+        const redNodes = nodesInLevel.filter(node => outgoingEdgeCounts[node.id] === 0); // No targets
+        const greenNodes = nodesInLevel.filter(node => incomingEdgeCounts[node.id] === 0); // No sources
+        const orangeNodes = nodesInLevel.filter(node => node.is_volatile); // Volatile tables
+        const blueNodes = nodesInLevel.filter(node => 
+            outgoingEdgeCounts[node.id] > 0 && 
+            incomingEdgeCounts[node.id] > 0 && 
+            !node.is_volatile
+        ); // Intermediate tables
+        
+        // Calculate x position (level * spacing)
+        const x = level * levelSpacing;
+        
+        // Position nodes by color type with optimized column placement
+        // Column 0: Green nodes (no sources) - Source tables
+        const greenTotalHeight = (greenNodes.length - 1) * nodeSpacing;
+        const greenStartY = -greenTotalHeight / 2;
+        
+        greenNodes.forEach((node, index) => {
+            const y = greenStartY + index * nodeSpacing;
+            
+            hierarchicalLevels[node.id] = {
+                x: x,
+                y: y,
+                level: level,
+                column: 0, // Left column for green nodes (sources)
+                color: 'green'
+            };
+        });
+        
+        // Optimize column placement based on node counts
+        let currentColumn = 1;
+        let currentX = x + columnWidth;
+        
+        // Place orange nodes (volatile) - Volatile tables
+        if (orangeNodes.length > 0) {
+            const orangeTotalHeight = (orangeNodes.length - 1) * nodeSpacing;
+            const orangeStartY = -orangeTotalHeight / 2;
+            
+            orangeNodes.forEach((node, index) => {
+                const y = orangeStartY + index * nodeSpacing;
+                
+                hierarchicalLevels[node.id] = {
+                    x: currentX,
+                    y: y,
+                    level: level,
+                    column: currentColumn,
+                    color: 'orange'
+                };
+            });
+            currentColumn++;
+            currentX += columnWidth;
+        }
+        
+        // Place blue nodes (intermediate) - Intermediate tables
+        if (blueNodes.length > 0) {
+            const blueTotalHeight = (blueNodes.length - 1) * nodeSpacing;
+            const blueStartY = -blueTotalHeight / 2;
+            
+            blueNodes.forEach((node, index) => {
+                const y = blueStartY + index * nodeSpacing;
+                
+                hierarchicalLevels[node.id] = {
+                    x: currentX,
+                    y: y,
+                    level: level,
+                    column: currentColumn,
+                    color: 'blue'
+                };
+            });
+            currentColumn++;
+            currentX += columnWidth;
+        }
+        
+        // Place red nodes (no targets) - Final target tables (rightmost)
+        // Red nodes should be in their own separate columns, not mixed with other colors
+        if (redNodes.length > 0) {
+            // Only split red nodes into multiple columns if there are more than 10 red nodes
+            const redColumns = redNodes.length > 10 ? Math.ceil(redNodes.length / 5) : 1;
+            
+            if (redColumns > 1) {
+                // Split red nodes into multiple columns but keep them rightmost
+                const nodesPerRedColumn = Math.ceil(redNodes.length / redColumns);
+                
+                redNodes.forEach((node, index) => {
+                    const column = Math.floor(index / nodesPerRedColumn);
+                    const columnIndex = index % nodesPerRedColumn;
+                    
+                    const nodeX = currentX + column * (columnWidth / redColumns);
+                    const totalHeight = (nodesPerRedColumn - 1) * nodeSpacing;
+                    const startY = -totalHeight / 2;
+                    const y = startY + columnIndex * nodeSpacing;
+                    
+                    hierarchicalLevels[node.id] = {
+                        x: nodeX,
+                        y: y,
+                        level: level,
+                        column: currentColumn + column,
+                        color: 'red'
+                    };
+                });
+            } else {
+                // Single column for red nodes - position them all in the rightmost column
+                const redTotalHeight = (redNodes.length - 1) * nodeSpacing;
+                const redStartY = -redTotalHeight / 2;
+                
+                redNodes.forEach((node, index) => {
+                    const y = redStartY + index * nodeSpacing;
+                    
+                    hierarchicalLevels[node.id] = {
+                        x: currentX,
+                        y: y,
+                        level: level,
+                        column: currentColumn,
+                        color: 'red'
+                    };
+                });
+            }
+        }
+        
+        // Handle levels with many nodes (more than 10 total) for other colors
+        if (nodesInLevel.length > 10) {
+            // Calculate number of sub-columns needed for each color type
+            const greenColumns = Math.ceil(greenNodes.length / 5);
+            const orangeColumns = Math.ceil(orangeNodes.length / 5);
+            const blueColumns = Math.ceil(blueNodes.length / 5);
+            
+            // Recalculate green node positions with multiple columns
+            if (greenColumns > 1) {
+                const nodesPerGreenColumn = Math.ceil(greenNodes.length / greenColumns);
+                
+                greenNodes.forEach((node, index) => {
+                    const column = Math.floor(index / nodesPerGreenColumn);
+                    const columnIndex = index % nodesPerGreenColumn;
+                    
+                    const nodeX = x + column * (columnWidth / greenColumns);
+                    const totalHeight = (nodesPerGreenColumn - 1) * nodeSpacing;
+                    const startY = -totalHeight / 2;
+                    const y = startY + columnIndex * nodeSpacing;
+                    
+                    hierarchicalLevels[node.id] = {
+                        x: nodeX,
+                        y: y,
+                        level: level,
+                        column: column,
+                        color: 'green'
+                    };
+                });
+            }
+            
+            // Recalculate orange node positions with multiple columns
+            if (orangeColumns > 1 && orangeNodes.length > 0) {
+                const nodesPerOrangeColumn = Math.ceil(orangeNodes.length / orangeColumns);
+                
+                const orangeX = x + columnWidth; // Orange nodes are in the second column
+                
+                orangeNodes.forEach((node, index) => {
+                    const column = Math.floor(index / nodesPerOrangeColumn);
+                    const columnIndex = index % nodesPerOrangeColumn;
+                    
+                    const nodeX = orangeX + column * (columnWidth / orangeColumns);
+                    const totalHeight = (nodesPerOrangeColumn - 1) * nodeSpacing;
+                    const startY = -totalHeight / 2;
+                    const y = startY + columnIndex * nodeSpacing;
+                    
+                    hierarchicalLevels[node.id] = {
+                        x: nodeX,
+                        y: y,
+                        level: level,
+                        column: column,
+                        color: 'orange'
+                    };
+                });
+            }
+            
+            // Recalculate blue node positions with multiple columns
+            if (blueColumns > 1 && blueNodes.length > 0) {
+                const nodesPerBlueColumn = Math.ceil(blueNodes.length / blueColumns);
+                
+                // Calculate blue node position - blue nodes come after orange nodes but before red nodes
+                let blueX = x;
+                if (orangeNodes.length > 0) blueX += columnWidth;
+                blueX += columnWidth; // Blue nodes are after orange nodes
+                
+                blueNodes.forEach((node, index) => {
+                    const column = Math.floor(index / nodesPerBlueColumn);
+                    const columnIndex = index % nodesPerBlueColumn;
+                    
+                    const nodeX = blueX + column * (columnWidth / blueColumns);
+                    const totalHeight = (nodesPerBlueColumn - 1) * nodeSpacing;
+                    const startY = -totalHeight / 2;
+                    const y = startY + columnIndex * nodeSpacing;
+                    
+                    hierarchicalLevels[node.id] = {
+                        x: nodeX,
+                        y: y,
+                        level: level,
+                        column: column,
+                        color: 'blue'
+                    };
+                });
+            }
+        }
+    });
+    
+    // Log level distribution for debugging
+    console.log('Level distribution with color separation:');
+    Object.keys(levelGroups).forEach(levelStr => {
+        const level = parseInt(levelStr);
+        const nodesInLevel = levelGroups[level];
+        
+        // Calculate counts for each color type
+        const outgoingEdgeCounts = {};
+        const incomingEdgeCounts = {};
+        nodesInLevel.forEach(node => {
+            outgoingEdgeCounts[node.id] = getOutgoingEdges(node.id, edges).length;
+            incomingEdgeCounts[node.id] = getIncomingEdges(node.id, edges).length;
+        });
+        
+        const redCount = nodesInLevel.filter(node => outgoingEdgeCounts[node.id] === 0).length;
+        const greenCount = nodesInLevel.filter(node => incomingEdgeCounts[node.id] === 0).length;
+        const orangeCount = nodesInLevel.filter(node => node.is_volatile).length;
+        const blueCount = nodesInLevel.filter(node => 
+            outgoingEdgeCounts[node.id] > 0 && 
+            incomingEdgeCounts[node.id] > 0 && 
+            !node.is_volatile
+        ).length;
+        
+        console.log(`  Level ${level}: ${nodesInLevel.length} nodes (${redCount} red, ${greenCount} green, ${orangeCount} orange, ${blueCount} blue)`);
+        
+        // Debug red node positioning
+        if (redCount > 0) {
+            const redNodeIds = nodesInLevel.filter(node => {
+                const outgoingEdgeCount = getOutgoingEdges(node.id, edges).length;
+                return outgoingEdgeCount === 0;
+            }).map(node => node.name);
+            console.log(`    -> Red nodes (rightmost): ${redNodeIds.join(', ')}`);
+            console.log(`    -> Red nodes will be positioned in separate column(s) to avoid mixing with other colors`);
+        }
+        
+        if (redCount > 0) {
+            const redColumns = redCount > 10 ? Math.ceil(redCount / 5) : 1;
+            console.log(`    -> Red nodes: ${redColumns} column(s) (rightmost) - ${redCount} total red nodes`);
+        }
+        
+        if (nodesInLevel.length > 10) {
+            const greenColumns = Math.ceil(greenCount / 5);
+            const orangeColumns = Math.ceil(orangeCount / 5);
+            const blueColumns = Math.ceil(blueCount / 5);
+            console.log(`    -> Green: ${greenColumns} columns, Orange: ${orangeColumns} columns, Blue: ${blueColumns} columns`);
+        }
+    });
+    
+    return hierarchicalLevels;
 }
 
 // Helper function to convert operation indices to script names with local indices
@@ -1873,9 +2225,6 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     // Apply filters to get filtered data
     const { nodes: filteredNodes, edges: filteredEdges } = applyFilters(scriptFilters, tableFilters, connectionMode);
     
-    // Calculate node levels for hierarchical layout
-    const nodeLevels = calculateNodeLevels(filteredNodes, filteredEdges);
-    
     // Create vis.js nodes
     const visNodes = filteredNodes.map(node => {
         const nodeColor = getNodeColor(node, filteredEdges);
@@ -1969,6 +2318,35 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
             selectConnectedEdges: true
         }
     };
+    
+    // Add hierarchical layout when flow view is enabled
+    if (flowViewEnabled) {
+        // Calculate hierarchical levels with color-based separation
+        const hierarchicalLevels = calculateHierarchicalLevelsWithColorSeparation(filteredNodes, filteredEdges);
+        
+        // Apply hierarchical positioning to nodes with color separation
+        visNodes.forEach(node => {
+            const level = hierarchicalLevels[node.id];
+            if (level !== undefined) {
+                node.x = level.x;
+                node.y = level.y;
+                node.fixed = true; // Fix position for hierarchical layout
+            }
+        });
+        
+        // Update options for hierarchical layout
+        options.layout = {
+            hierarchical: {
+                enabled: false // Disable vis.js hierarchical layout since we're doing manual positioning
+            }
+        };
+        
+        // Disable physics for hierarchical layout
+        options.physics.enabled = false;
+        
+        console.log('Flow view enabled - using manual hierarchical layout with color separation');
+        console.log('Hierarchical levels with color separation:', hierarchicalLevels);
+    }
     
     if (network) {
         network.destroy();
@@ -2856,6 +3234,15 @@ function updateSelectedScriptLabel() {
         hasFilters = true;
     }
     
+    // Add flow view status
+    if (flowViewEnabled) {
+        if (hasFilters) {
+            filterText += ', ';
+        }
+        filterText += 'Flow View: ON';
+        hasFilters = true;
+    }
+    
     if (hasFilters) {
         labelDiv.textContent = filterText;
     } else {
@@ -3271,10 +3658,7 @@ function initializeGlobalKeyboardHandlers() {
     });
 }
 
-// Remove the old initializeScriptSearchInputEvents function since it's now handled by the consolidated system
-// function initializeScriptSearchInputEvents() {
-//     // This function is now replaced by initializeScriptAutocompleteEvents()
-// }
+
 
 function toggleConnectionMode() {
     const select = document.getElementById('connectionModeSelect');
@@ -3296,6 +3680,25 @@ function toggleLockView() {
     lockViewEnabled = checkbox.checked;
     
     console.log('Lock view:', lockViewEnabled ? 'enabled' : 'disabled');
+}
+
+function toggleFlowView() {
+    const checkbox = document.getElementById('flowViewCheckbox');
+    
+    // Update the flow view state based on checkbox state
+    flowViewEnabled = checkbox.checked;
+    
+    console.log('Flow view:', flowViewEnabled ? 'enabled' : 'disabled');
+    
+    // Re-render the network with the new layout
+    createNetworkVisualization(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters,
+        true // force recreation
+    );
+    
+    // Update the selected script label to show flow view status
+    updateSelectedScriptLabel();
 }
 
 // Removed duplicate initializeScriptSearchInputEvents function - functionality is now handled by initializeScriptAutocompleteEvents()
