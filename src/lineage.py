@@ -860,7 +860,34 @@ class ETLLineageAnalyzer:
 
     def _extract_source_tables_from_update(self, statement: str, warnings: List[str] = None) -> List[str]:
         """Extract source tables from UPDATE statement (Teradata format), recursively."""
-        return self._extract_all_source_tables(statement, warnings)
+        # Get all source tables from FROM/JOIN clauses and subqueries
+        source_tables = self._extract_all_source_tables(statement, warnings)
+        
+        # For UPDATE statements, also include the target table as a source table
+        # because UPDATE operations read from the target table to update it
+        
+        # Extract target table name from UPDATE statement
+        target_table = None
+        
+        # Try Teradata format first: UPDATE alias FROM table alias
+        teradata_match = re.search(
+            r"UPDATE\s+\w+\s+FROM\s+([\w\.]+)", statement, re.IGNORECASE
+        )
+        if teradata_match:
+            target_table = teradata_match.group(1)
+        else:
+            # Try standard format: UPDATE table SET
+            standard_match = re.search(
+                r"UPDATE\s+([\w\.]+)\s+SET", statement, re.IGNORECASE
+            )
+            if standard_match:
+                target_table = standard_match.group(1)
+        
+        # Add target table to source tables if found and valid
+        if target_table and self.is_valid_table_name(target_table):
+            source_tables.append(target_table)
+        
+        return source_tables
 
     def analyze_script(self, script_path: str) -> LineageInfo:
         """Analyze an ETL script and extract lineage information"""
@@ -1121,10 +1148,15 @@ class ETLLineageAnalyzer:
             print(f"   - All BTEQ statements were filtered out during cleaning")
             print(f"   - Script contains only BTEQ control statements (no SQL)")
         
+        # Create sorted tables data for consistent JSON output
+        sorted_tables_data = {}
+        for table_name in sorted(tables_data.keys()):
+            sorted_tables_data[table_name] = tables_data[table_name]
+        
         data = {
             "script_name": lineage_info.script_name,
             "bteq_statements": bteq_statements,
-            "tables": tables_data,
+            "tables": sorted_tables_data,
             "warnings": lineage_info.warnings
         }
 
