@@ -19,6 +19,16 @@ let flowViewEnabled = false;
 let allNodes = {};
 let allEdges = [];
 
+// Autocomplete variables for table search
+let allTableNames = [];
+let filteredTableNames = [];
+let selectedAutocompleteIndex = -1;
+
+// Autocomplete variables for script search
+let allScriptNames = [];
+let filteredScriptNames = [];
+let selectedScriptAutocompleteIndex = -1;
+
 // Function to reset all network-related data when new data is loaded
 function resetNetworkData() {
     console.log('Resetting network data for new data load...');
@@ -294,8 +304,8 @@ function buildOwnershipModel() {
                         sourceNodeId = rel.name;
                     }
                     
-                    // Only create edge if both nodes exist and it's not a self-reference
-                    if (allNodes[sourceNodeId] && allNodes[currentNodeId] && sourceNodeId !== currentNodeId) {
+                    // Only create edge if both nodes exist (allow self-references for UPDATE operations)
+                    if (allNodes[sourceNodeId] && allNodes[currentNodeId]) {
                         // Create edge
                         const edgeKey = `${sourceNodeId}->${currentNodeId}`;
                         const existingEdge = edgeMap.get(edgeKey);
@@ -309,6 +319,8 @@ function buildOwnershipModel() {
                                 });
                                 existingEdge[2] = Array.from(existingOps);
                                 console.log(`Updated existing edge: ${sourceNodeId} -> ${currentNodeId} with operations from ${scriptName}`);
+                            } else {
+                                console.warn(`Skipping operation update for existing edge: ${sourceNodeId} -> ${currentNodeId} (no operations defined in relationship)`);
                             }
                         } else {
                             // Create new edge - if there are operations and both nodes exist
@@ -319,15 +331,16 @@ function buildOwnershipModel() {
                                 edgeMap.set(edgeKey, newEdge);
                                 console.log(`Created edge: ${sourceNodeId} -> ${currentNodeId} (${operations.length} operations) from script ${scriptName}`);
                             } else {
-                                console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (no operations defined)`);
+                                // Skip self-loops without operations
+                                if (sourceNodeId === currentNodeId) {
+                                    console.warn(`Skipping self-loop edge: ${sourceNodeId} -> ${currentNodeId} (no operations defined) - Relationship: ${JSON.stringify(rel)}`);
+                                } else {
+                                    console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (no operations defined) - Relationship: ${JSON.stringify(rel)}`);
+                                }
                             }
                         }
                     } else {
-                        if (sourceNodeId === currentNodeId) {
-                            console.warn(`Skipping self-reference edge: ${sourceNodeId} -> ${currentNodeId}`);
-                        } else {
-                            console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (one or both nodes don't exist)`);
-                        }
+                        console.warn(`Skipping edge: ${sourceNodeId} -> ${currentNodeId} (one or both nodes don't exist)`);
                     }
                 });
             }
@@ -364,8 +377,8 @@ function buildOwnershipModel() {
                         targetNodeId = rel.name;
                     }
                     
-                    // Only create edge if both nodes exist and it's not a self-reference
-                    if (allNodes[currentNodeId] && allNodes[targetNodeId] && currentNodeId !== targetNodeId) {
+                    // Only create edge if both nodes exist (allow self-references for UPDATE operations)
+                    if (allNodes[currentNodeId] && allNodes[targetNodeId]) {
                         // Create edge
                         const edgeKey = `${currentNodeId}->${targetNodeId}`;
                         const existingEdge = edgeMap.get(edgeKey);
@@ -379,6 +392,8 @@ function buildOwnershipModel() {
                                 });
                                 existingEdge[2] = Array.from(existingOps);
                                 console.log(`Updated existing edge: ${currentNodeId} -> ${targetNodeId} with operations from ${scriptName}`);
+                            } else {
+                                console.warn(`Skipping operation update for existing edge: ${currentNodeId} -> ${targetNodeId} (no operations defined in relationship)`);
                             }
                         } else {
                             // Create new edge - if there are operations and both nodes exist
@@ -389,15 +404,16 @@ function buildOwnershipModel() {
                                 edgeMap.set(edgeKey, newEdge);
                                 console.log(`Created edge: ${currentNodeId} -> ${targetNodeId} (${operations.length} operations) from script ${scriptName}`);
                             } else {
-                                console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (no operations defined)`);
+                                // Skip self-loops without operations
+                                if (currentNodeId === targetNodeId) {
+                                    console.warn(`Skipping self-loop edge: ${currentNodeId} -> ${targetNodeId} (no operations defined) - Relationship: ${JSON.stringify(rel)}`);
+                                } else {
+                                    console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (no operations defined) - Relationship: ${JSON.stringify(rel)}`);
+                                }
                             }
                         }
                     } else {
-                        if (currentNodeId === targetNodeId) {
-                            console.warn(`Skipping self-reference edge: ${currentNodeId} -> ${targetNodeId}`);
-                        } else {
-                            console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (one or both nodes don't exist)`);
-                        }
+                        console.warn(`Skipping edge: ${currentNodeId} -> ${targetNodeId} (one or both nodes don't exist)`);
                     }
                 });
             }
@@ -2979,9 +2995,6 @@ window.onclick = function(event) {
 // Global click and keyboard handlers are now handled by the consolidated event system
 
 // Search/filter for network node by name
-let allTableNames = [];
-let filteredTableNames = [];
-let selectedAutocompleteIndex = -1;
 
 function initializeTableNames() {
     if (allNodes) {
@@ -3420,6 +3433,14 @@ function applyFilters(scriptFilters = [], tableFilters = [], mode = 'direct') {
                 return [from, to, filteredOperations];
             }
             return [from, to, operations];
+        })
+        .filter(([from, to, operations]) => {
+            // Remove edges that have no operations after filtering
+            if (!operations || operations.length === 0) {
+                console.log(`Filtering out edge with no operations: ${from} -> ${to}`);
+                return false;
+            }
+            return true;
         });
     
     console.log('Filter applied:', {
@@ -3473,9 +3494,6 @@ function clearNetworkScriptSearch() {
 
 
 // --- Script autocomplete state ---
-let allScriptNames = [];
-let filteredScriptNames = [];
-let selectedScriptAutocompleteIndex = -1;
 
 // Update allScriptNames when data is loaded
 function initializeScriptNames() {
