@@ -887,6 +887,17 @@ class ETLLineageAnalyzer:
         if target_table and self.is_valid_table_name(target_table):
             source_tables.append(target_table)
         
+        # Special fix for UPDATE statements with multiple tables in FROM clause
+        # Look for patterns like "FROM table1 alias1, table2 alias2"
+        from_clause_match = re.search(r"FROM\s+([^,]+),\s*([^,\s]+)", statement, re.IGNORECASE | re.DOTALL)
+        if from_clause_match:
+            # Extract the second table from the FROM clause
+            second_table = from_clause_match.group(2).strip()
+            # Remove any alias (single letter after the table name)
+            second_table = re.sub(r'\s+[A-Z]$', '', second_table)
+            if self.is_valid_table_name(second_table) and second_table not in source_tables:
+                source_tables.append(second_table)
+        
         return source_tables
 
     def analyze_script(self, script_path: str) -> LineageInfo:

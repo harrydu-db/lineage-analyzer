@@ -29,6 +29,8 @@ let allScriptNames = [];
 let filteredScriptNames = [];
 let selectedScriptAutocompleteIndex = -1;
 
+// Custom tooltip variables (global scope)
+let currentTooltip = null;
 // Function to reset all network-related data when new data is loaded
 function resetNetworkData() {
     console.log('Resetting network data for new data load...');
@@ -59,6 +61,11 @@ function resetNetworkData() {
     allScriptNames = [];
     filteredScriptNames = [];
     selectedScriptAutocompleteIndex = -1;
+    
+    // Reset tooltip variables
+    if (currentTooltip) {
+        hideCustomTooltip();
+    }
     
     // Reset table selection
     selectedTable = null;
@@ -110,15 +117,11 @@ function buildOwnershipModel() {
     
 
     
-    console.log('Building ownership model...');
-    console.log('Total scripts to process:', Object.keys(lineageData.scripts).length);
-    
     // PASS 1: Build all nodes with proper ownership
-    console.log('=== PASS 1: Building nodes ===');
     
     // First, create nodes for all defined tables from each script
     for (const [scriptName, scriptData] of Object.entries(lineageData.scripts)) {
-        console.log(`Processing script: ${scriptName}`);
+
         
         for (const [tableName, tableObj] of Object.entries(scriptData.tables || {})) {
             // Determine node ID based on volatility
@@ -150,7 +153,7 @@ function buildOwnershipModel() {
                 };
             }
             
-            console.log(`Created/updated node: ${nodeId} (${tableObj.is_volatile ? 'volatile' : 'global'})`);
+
         }
     }
     
@@ -254,10 +257,7 @@ function buildOwnershipModel() {
         }
     }
     
-    console.log(`PASS 1 complete: ${Object.keys(allNodes).length} nodes created`);
-    
     // PASS 2: Build all edges using complete node information
-    console.log('=== PASS 2: Building edges ===');
     
     // Create edge map for O(1) lookup performance
     const edgeMap = new Map();
@@ -420,10 +420,7 @@ function buildOwnershipModel() {
         }
     }
     
-    console.log(`PASS 2 complete: ${allEdges.length} edges created`);
-    
     // PASS 3: Discover all script owners for each table
-    console.log('=== PASS 3: Discovering all owners ===');
     
     // Create a map to track all scripts that reference each table
     const tableOwners = {};
@@ -2156,6 +2153,11 @@ function showError(message) {
 }
 
 function switchTab(tabName) {
+    // Hide tooltip when switching tabs
+    if (currentTooltip) {
+        hideCustomTooltip();
+    }
+    
     // Update tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
@@ -2198,6 +2200,11 @@ function getOutgoingEdges(nodeId, edges) {
 // Helper function to get incoming edges for a node (excluding self-references)
 function getIncomingEdges(nodeId, edges) {
     return edges.filter(([from, to]) => to === nodeId && from !== to);
+}
+
+// Helper function to get self edges for a node
+function getSelfEdges(nodeId, edges) {
+    return edges.filter(([from, to]) => from === nodeId && to === nodeId);
 }
 
 // Helper function to determine node color based on edge relationships and volatility
@@ -2252,7 +2259,6 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
         return {
             id: node.id,
             label: node.name,
-            title: `${node.name}\nSources: ${incomingEdgeCount}\nTargets: ${outgoingEdgeCount}\nVolatile: ${node.is_volatile ? 'Yes' : 'No'}\nOwners: ${node.owners.join(', ')}`,
             color: nodeColor,
             size: nodeSize,
             font: {
@@ -2282,26 +2288,9 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
         };
     });
     
-    // Debug: Print nodes used in the network
-    console.log('=== Network Re-render Debug ===');
-    console.log('Function: createNetworkVisualization');
-    console.log('Script filters:', scriptFilters);
-    console.log('Table filters:', tableFilters);
-    console.log('Connection mode:', connectionMode);
-    console.log('Total nodes:', visNodes.length);
-    console.log('Nodes:', visNodes.map(n => n.id).sort());
-    console.log('Total edges:', visEdges.length);
-    
     // Additional debug info about volatile tables
     const volatileNodes = filteredNodes.filter(node => node.is_volatile);
     const globalNodes = filteredNodes.filter(node => !node.is_volatile);
-    console.log(`Volatile tables: ${volatileNodes.length}, Global tables: ${globalNodes.length}`);
-    
-    if (volatileNodes.length > 0) {
-        console.log('Volatile tables in network:', volatileNodes.map(n => `${n.name} (${n.owners.join(', ')})`));
-    }
-    
-    console.log('================================');
     
     // Create the network
     const data = {
@@ -2325,8 +2314,8 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
             enabled: false
         },
         interaction: {
-            hover: true,
-            tooltipDelay: 200,
+            hover: true, // Enable hover events but we'll handle tooltips ourselves
+            tooltipDelay: 0, // Disable default tooltip delay
             zoomView: true,
             dragView: true,
             dragNodes: true,
@@ -2360,11 +2349,14 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
         // Disable physics for hierarchical layout
         options.physics.enabled = false;
         
-        console.log('Flow view enabled - using manual hierarchical layout with color separation');
-        console.log('Hierarchical levels with color separation:', hierarchicalLevels);
+
     }
     
     if (network) {
+        // Hide tooltip before destroying network
+        if (currentTooltip) {
+            hideCustomTooltip();
+        }
         network.destroy();
     }
     
@@ -2373,19 +2365,7 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
     // Add zoom buttons after network is created
     addZoomButtons();
     
-    // Physics is disabled to prevent animation
-    network.on('stabilizationProgress', function(params) {
-        // Physics is disabled
-    });
-    
-    network.on('stabilizationIterationsDone', function(params) {
-        // Physics remains disabled
-        network.setOptions({
-            physics: {
-                enabled: false
-            }
-        });
-    });
+
     
     // Add click events for nodes and edges
     network.on('click', function(params) {
@@ -2408,20 +2388,51 @@ function createNetworkVisualization(scriptFilters = [], tableFilters = [], force
         }
     });
     
-    // Validate the network for volatile table violations
-    validateNetworkVolatileTableRules(filteredNodes, filteredEdges);
+    // Add double-click events for nodes to show edge details
+    network.on('doubleClick', function(params) {
+        if (params.nodes.length > 0) {
+            const clickedNodeId = params.nodes[0];
+            const node = allNodes[clickedNodeId];
+            const nodeName = node ? node.name : clickedNodeId;
+            
+            // Show a custom modal to choose between incoming and outgoing edges
+            showEdgeChoiceModal(clickedNodeId, nodeName);
+        }
+    });
     
-    // Detect data modeling issues
-    detectDataModelingIssues(filteredNodes, filteredEdges);
+    // Add custom tooltip system
     
-    // Print a quick summary
-    getNetworkValidationSummary(filteredNodes, filteredEdges);
+    // Mouse over node - show tooltip
+    network.on('hoverNode', function(params) {
+        const nodeId = params.node;
+        const node = allNodes[nodeId];
+        if (!node) {
+            return;
+        }
+        
+        // Get current filtered edges to show counts
+        const { edges: filteredEdges } = applyFilters(
+            selectedNetworkScript ? [selectedNetworkScript] : [], 
+            selectedTableFilters, 
+            connectionMode
+        );
+        
+        const incomingEdgeCount = getIncomingEdges(nodeId, filteredEdges).length;
+        const outgoingEdgeCount = getOutgoingEdges(nodeId, filteredEdges).length;
+        const selfEdgeCount = getSelfEdges(nodeId, filteredEdges).length;
+        
+        // Create tooltip
+        showCustomTooltip(params.event, node, incomingEdgeCount, outgoingEdgeCount, selfEdgeCount);
+    });
     
-    // Perform comprehensive algorithm analysis
-    analyzeNetworkAlgorithm(filteredNodes, filteredEdges);
+
+    
+
+    
+
 }
 
-// Validate volatile table rules in the network
+
 function validateNetworkVolatileTableRules(nodes, edges) {
     console.log('=== VOLATILE TABLE VALIDATION ===');
     
@@ -2867,6 +2878,532 @@ ${sqlStatement}
     networkModal.style.display = 'block';
 }
 
+// Function to show incoming edges for a node
+function showIncomingEdges(nodeId) {
+    const networkModal = document.getElementById('networkModal');
+    const networkModalTitle = document.getElementById('networkModalTitle');
+    const networkModalContent = document.getElementById('networkModalContent');
+    
+    // Get current filtered edges
+    const { edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    // Find incoming edges for this node
+    const incomingEdges = getIncomingEdges(nodeId, filteredEdges);
+    
+    // Get node name
+    const node = allNodes[nodeId];
+    const nodeName = node ? node.name : nodeId;
+    
+    // Update title
+    networkModalTitle.textContent = `Incoming Edges for ${nodeName}`;
+    
+    if (incomingEdges.length === 0) {
+        // No incoming edges
+        networkModalContent.innerHTML = `
+            <div style="margin-bottom: 20px;">
+                <h4 style="color: #495057; margin-bottom: 10px;">Incoming Edges</h4>
+                <p><strong>Table:</strong> ${nodeName}</p>
+                <p><strong>Count:</strong> 0</p>
+            </div>
+            <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+                <p style="color: #6c757d; font-style: italic;">This table has no incoming edges (it's a source table).</p>
+            </div>
+        `;
+    } else {
+        // Create content with SQL statements for each incoming edge
+        let content = `
+            <div style="margin-bottom: 20px;">
+                <h4 style="color: #495057; margin-bottom: 10px;">Incoming Edges</h4>
+                <p><strong>Table:</strong> ${nodeName}</p>
+                <p><strong>Count:</strong> ${incomingEdges.length}</p>
+            </div>
+            <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">SQL Statements</h4>
+        `;
+        
+        // Process each incoming edge
+        incomingEdges.forEach(([from, to, operations], index) => {
+            const fromNode = allNodes[from];
+            const fromName = fromNode ? fromNode.name : from;
+            
+            // Parse operations
+            let opGroups = [];
+            if (operations && operations.length > 0) {
+                const operationTexts = getOperationDisplayText(operations);
+                operationTexts.split(',').forEach(part => {
+                    const trimmed = part.trim();
+                    const match = trimmed.match(/^(.*?):([\d|]+)$/);
+                    if (match) {
+                        const scriptName = match[1];
+                        const indices = match[2].split('|').map(x => parseInt(x, 10)).filter(x => !isNaN(x));
+                        if (indices.length > 0) {
+                            opGroups.push({scriptName, indices});
+                        }
+                    }
+                });
+            }
+            
+            content += `
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;">
+                    <h5 style="color: #007bff; margin-bottom: 10px;">${fromName} → ${nodeName}</h5>
+                    <p style="color: #6c757d; margin-bottom: 10px; font-size: 0.9em;">Operations: ${operations ? getOperationDisplayText(operations) : 'None'}</p>
+            `;
+            
+            // Add SQL statements for this edge
+            opGroups.forEach(group => {
+                let scriptData = null;
+                if (lineageData.scripts && lineageData.scripts[group.scriptName]) {
+                    scriptData = lineageData.scripts[group.scriptName];
+                } else if (lineageData.scripts) {
+                    // Try to find by normalized script name
+                    for (const [key, sData] of Object.entries(lineageData.scripts)) {
+                        let normKey = key.split('/').pop().replace(/\.json$/i, '');
+                        if (normKey.match(/_sh_lineage$/i)) normKey = normKey.replace(/_sh_lineage$/i, '.sh');
+                        else if (normKey.match(/_ksh_lineage$/i)) normKey = normKey.replace(/_ksh_lineage$/i, '.ksh');
+                        else if (normKey.match(/_sql_lineage$/i)) normKey = normKey.replace(/_sql_lineage$/i, '.sql');
+                        else if (normKey.match(/_lineage$/i)) normKey = normKey.replace(/_lineage$/i, '');
+                        if (normKey === group.scriptName) {
+                            scriptData = sData;
+                            break;
+                        }
+                    }
+                }
+                
+                group.indices.forEach(localIdx => {
+                    let sqlStatement = null;
+                    if (scriptData && scriptData.bteq_statements && scriptData.bteq_statements.length > localIdx) {
+                        sqlStatement = scriptData.bteq_statements[localIdx];
+                    } else if (!lineageData.scripts && lineageData.bteq_statements && lineageData.bteq_statements.length > localIdx) {
+                        sqlStatement = lineageData.bteq_statements[localIdx];
+                    }
+                    if (sqlStatement) {
+                        // Create operation string in new format for clickable link
+                        const operationString = `${group.scriptName}::op${localIdx}`;
+                        content += `
+                            <div style="margin-bottom: 10px;">
+                                <h6 style="color: #007bff; margin-bottom: 5px; cursor: pointer;" onclick="showSql('${operationString}')">${group.scriptName}:${localIdx}</h6>
+                                <div style="background: #f8f9fa; padding: 8px; border-radius: 4px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 11px; line-height: 1.3; max-height: 150px; overflow-y: auto; border: 1px solid #e9ecef;">
+${sqlStatement}
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+            });
+            
+            content += `</div>`;
+        });
+        
+        content += `</div>`;
+        networkModalContent.innerHTML = content;
+    }
+    
+    networkModal.style.display = 'block';
+}
+
+// Function to show a modal for choosing between incoming and outgoing edges
+function showEdgeChoiceModal(nodeId, nodeName) {
+    // Create modal elements
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 10000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    `;
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        text-align: center;
+        max-width: 400px;
+        width: 90%;
+    `;
+    
+    // Get current filtered edges to show counts
+    const { edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    const incomingEdgeCount = getIncomingEdges(nodeId, filteredEdges).length;
+    const outgoingEdgeCount = getOutgoingEdges(nodeId, filteredEdges).length;
+    const selfEdgeCount = getSelfEdges(nodeId, filteredEdges).length;
+    
+    modalContent.innerHTML = `
+        <h3 style="color: #495057; margin-bottom: 20px;">Edge Details for ${nodeName}</h3>
+        <p style="color: #6c757d; margin-bottom: 25px;">Choose which edges to view:</p>
+        
+        <div style="display: flex; gap: 15px; justify-content: center; margin-bottom: 25px; flex-wrap: wrap;">
+            <button id="incomingBtn" style="
+                padding: 12px 20px;
+                background: #007bff;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                min-width: 120px;
+            ">📥 Incoming (${incomingEdgeCount})</button>
+            
+            <button id="outgoingBtn" style="
+                padding: 12px 20px;
+                background: #28a745;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                min-width: 120px;
+            ">📤 Outgoing (${outgoingEdgeCount})</button>
+            
+            <button id="selfBtn" style="
+                padding: 12px 20px;
+                background: #ff6b35;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                min-width: 120px;
+            ">🔄 Self (${selfEdgeCount})</button>
+        </div>
+        
+        <div style="margin-bottom: 15px; font-size: 0.9em; color: #6c757d;">
+            <p>Keyboard shortcuts: Press 'i' for incoming, 'o' for outgoing, 's' for self, or 'Escape' to cancel</p>
+        </div>
+        
+        <button id="cancelBtn" style="
+            padding: 8px 16px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        ">Cancel</button>
+    `;
+    
+    // Add event listeners
+    const incomingBtn = modalContent.querySelector('#incomingBtn');
+    const outgoingBtn = modalContent.querySelector('#outgoingBtn');
+    const selfBtn = modalContent.querySelector('#selfBtn');
+    const cancelBtn = modalContent.querySelector('#cancelBtn');
+    
+    const cleanup = () => {
+        document.body.removeChild(modal);
+    };
+    
+    incomingBtn.onclick = () => {
+        cleanup();
+        showIncomingEdges(nodeId);
+    };
+    
+    outgoingBtn.onclick = () => {
+        cleanup();
+        showOutgoingEdges(nodeId);
+    };
+    
+    selfBtn.onclick = () => {
+        cleanup();
+        showSelfEdges(nodeId);
+    };
+    
+    cancelBtn.onclick = cleanup;
+    
+    // Close on background click
+    modal.onclick = (e) => {
+        if (e.target === modal) {
+            cleanup();
+        }
+    };
+    
+    // Add keyboard shortcuts
+    const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+            cleanup();
+        } else if (e.key === 'i' || e.key === 'I') {
+            cleanup();
+            showIncomingEdges(nodeId);
+        } else if (e.key === 'o' || e.key === 'O') {
+            cleanup();
+            showOutgoingEdges(nodeId);
+        } else if (e.key === 's' || e.key === 'S') {
+            cleanup();
+            showSelfEdges(nodeId);
+        }
+    };
+    
+    document.addEventListener('keydown', handleKeydown);
+    
+    // Clean up event listener when modal is closed
+    const originalCleanup = cleanup;
+    cleanup = () => {
+        document.removeEventListener('keydown', handleKeydown);
+        originalCleanup();
+    };
+    
+    // Add to DOM
+    document.body.appendChild(modal);
+}
+
+// Function to show custom tooltip
+function showCustomTooltip(event, node, incomingEdgeCount, outgoingEdgeCount, selfEdgeCount) {
+    
+    // Remove existing tooltip
+    hideCustomTooltip();
+    
+    // Create tooltip element
+    const tooltip = document.createElement('div');
+    tooltip.id = 'customTooltip';
+    tooltip.style.cssText = `
+        position: fixed;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: Arial, sans-serif;
+        z-index: 10000;
+        pointer-events: auto;
+        max-width: 300px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        line-height: 1.4;
+    `;
+    
+    tooltip.innerHTML = `
+        <div style="font-weight: bold; margin-bottom: 8px; color: #fff;">${node.name}</div>
+        <div style="margin-bottom: 6px;">
+            <span style="color: #007bff; cursor: pointer; text-decoration: underline; padding: 2px 4px; border-radius: 3px;" 
+                  onmouseover="this.style.backgroundColor='rgba(0,123,255,0.2)'; this.style.color='#0056b3'" 
+                  onmouseout="this.style.backgroundColor='transparent'; this.style.color='#007bff'"
+                  onclick="showIncomingEdges('${node.id}'); hideCustomTooltip();">
+                📥 In-edges: ${incomingEdgeCount}
+            </span>
+        </div>
+        <div style="margin-bottom: 6px;">
+            <span style="color: #28a745; cursor: pointer; text-decoration: underline; padding: 2px 4px; border-radius: 3px;" 
+                  onmouseover="this.style.backgroundColor='rgba(40,167,69,0.2)'; this.style.color='#1e7e34'" 
+                  onmouseout="this.style.backgroundColor='transparent'; this.style.color='#28a745'"
+                  onclick="showOutgoingEdges('${node.id}'); hideCustomTooltip();">
+                📤 Out-edges: ${outgoingEdgeCount}
+            </span>
+        </div>
+        <div style="margin-bottom: 6px;">
+            <span style="color: #ff6b35; cursor: pointer; text-decoration: underline; padding: 2px 4px; border-radius: 3px;" 
+                  onmouseover="this.style.backgroundColor='rgba(255,107,53,0.2)'; this.style.color='#e55a2b'" 
+                  onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ff6b35'"
+                  onclick="showSelfEdges('${node.id}'); hideCustomTooltip();">
+                🔄 Self-edges: ${selfEdgeCount}
+            </span>
+        </div>
+        <div style="margin-bottom: 6px; font-size: 11px; color: #ccc;">
+            Volatile: ${node.is_volatile ? 'Yes' : 'No'}
+        </div>
+        <div style="font-size: 11px; color: #ccc;">
+            Owners: ${node.owners.join(', ')}
+        </div>
+        <div style="margin-top: 8px; font-size: 10px; color: #aaa; text-align: center; border-top: 1px solid #555; padding-top: 4px;">
+            Click edge counts to view details
+        </div>
+    `;
+    
+    // Position tooltip near mouse, ensuring it stays on screen
+    const x = event.clientX + 10;
+    const y = event.clientY - 5;
+    
+    // Add to DOM first to get dimensions
+    document.body.appendChild(tooltip);
+    currentTooltip = tooltip;
+    
+    // Get tooltip dimensions
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    
+    // Adjust position if tooltip would go off screen
+    let finalX = x;
+    let finalY = y;
+    
+    if (x + tooltipRect.width > windowWidth - 20) {
+        finalX = x - tooltipRect.width - 30;
+    }
+    
+    if (y + tooltipRect.height > windowHeight - 20) {
+        finalY = y - tooltipRect.height - 10;
+    }
+    
+    // Set position once and keep it stable
+    tooltip.style.position = 'fixed';
+    tooltip.style.display = 'block';
+    tooltip.style.left = finalX + 'px';
+    tooltip.style.top = finalY + 'px';
+    tooltip.style.zIndex = '10000';
+    
+    // Add click outside listener to hide tooltip
+    const handleClickOutside = (event) => {
+        if (tooltip && !tooltip.contains(event.target)) {
+            hideCustomTooltip();
+            document.removeEventListener('click', handleClickOutside);
+        }
+    };
+    
+    // Add the click listener after a short delay to prevent immediate hiding
+    setTimeout(() => {
+        document.addEventListener('click', handleClickOutside);
+    }, 100);
+}
+
+// Function to hide custom tooltip
+function hideCustomTooltip() {
+    if (currentTooltip && currentTooltip.parentNode) {
+        document.body.removeChild(currentTooltip);
+        currentTooltip = null;
+        hoveredNodeId = null;
+    }
+}
+
+// Function to show outgoing edges for a node
+function showOutgoingEdges(nodeId) {
+    const networkModal = document.getElementById('networkModal');
+    const networkModalTitle = document.getElementById('networkModalTitle');
+    const networkModalContent = document.getElementById('networkModalContent');
+    
+    // Get current filtered edges
+    const { edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    // Find outgoing edges for this node
+    const outgoingEdges = getOutgoingEdges(nodeId, filteredEdges);
+    
+    // Get node name
+    const node = allNodes[nodeId];
+    const nodeName = node ? node.name : nodeId;
+    
+    // Update title
+    networkModalTitle.textContent = `Outgoing Edges for ${nodeName}`;
+    
+    if (outgoingEdges.length === 0) {
+        // No outgoing edges
+        networkModalContent.innerHTML = `
+            <div style="margin-bottom: 20px;">
+                <h4 style="color: #495057; margin-bottom: 10px;">Outgoing Edges</h4>
+                <p><strong>Table:</strong> ${nodeName}</p>
+                <p><strong>Count:</strong> 0</p>
+            </div>
+            <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+                <p style="color: #6c757d; font-style: italic;">This table has no outgoing edges (it's a final target table).</p>
+            </div>
+        `;
+    } else {
+        // Create content with SQL statements for each outgoing edge
+        let content = `
+            <div style="margin-bottom: 20px;">
+                <h4 style="color: #495057; margin-bottom: 10px;">Outgoing Edges</h4>
+                <p><strong>Table:</strong> ${nodeName}</p>
+                <p><strong>Count:</strong> ${outgoingEdges.length}</p>
+            </div>
+            <div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+                <h4 style="color: #495057; margin-bottom: 15px;">SQL Statements</h4>
+        `;
+        
+        // Process each outgoing edge
+        outgoingEdges.forEach(([from, to, operations], index) => {
+            const toNode = allNodes[to];
+            const toName = toNode ? toNode.name : to;
+            
+            // Parse operations
+            let opGroups = [];
+            if (operations && operations.length > 0) {
+                const operationTexts = getOperationDisplayText(operations);
+                operationTexts.split(',').forEach(part => {
+                    const trimmed = part.trim();
+                    const match = trimmed.match(/^(.*?):([\d|]+)$/);
+                    if (match) {
+                        const scriptName = match[1];
+                        const indices = match[2].split('|').map(x => parseInt(x, 10)).filter(x => !isNaN(x));
+                        if (indices.length > 0) {
+                            opGroups.push({scriptName, indices});
+                        }
+                    }
+                });
+            }
+            
+            content += `
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;">
+                    <h5 style="color: #007bff; margin-bottom: 10px;">${nodeName} → ${toName}</h5>
+                    <p style="color: #6c757d; margin-bottom: 10px; font-size: 0.9em;">Operations: ${operations ? getOperationDisplayText(operations) : 'None'}</p>
+            `;
+            
+            // Add SQL statements for this edge
+            opGroups.forEach(group => {
+                let scriptData = null;
+                if (lineageData.scripts && lineageData.scripts[group.scriptName]) {
+                    scriptData = lineageData.scripts[group.scriptName];
+                } else if (lineageData.scripts) {
+                    // Try to find by normalized script name
+                    for (const [key, sData] of Object.entries(lineageData.scripts)) {
+                        let normKey = key.split('/').pop().replace(/\.json$/i, '');
+                        if (normKey.match(/_sh_lineage$/i)) normKey = normKey.replace(/_sh_lineage$/i, '.sh');
+                        else if (normKey.match(/_ksh_lineage$/i)) normKey = normKey.replace(/_ksh_lineage$/i, '.ksh');
+                        else if (normKey.match(/_sql_lineage$/i)) normKey = normKey.replace(/_sql_lineage$/i, '.sql');
+                        else if (normKey.match(/_lineage$/i)) normKey = normKey.replace(/_lineage$/i, '');
+                        if (normKey === group.scriptName) {
+                            scriptData = sData;
+                            break;
+                        }
+                    }
+                }
+                
+                group.indices.forEach(localIdx => {
+                    let sqlStatement = null;
+                    if (scriptData && scriptData.bteq_statements && scriptData.bteq_statements.length > localIdx) {
+                        sqlStatement = scriptData.bteq_statements[localIdx];
+                    } else if (!lineageData.scripts && lineageData.bteq_statements && lineageData.bteq_statements.length > localIdx) {
+                        sqlStatement = lineageData.bteq_statements[localIdx];
+                    }
+                    if (sqlStatement) {
+                        // Create operation string in new format for clickable link
+                        const operationString = `${group.scriptName}::op${localIdx}`;
+                        content += `
+                            <div style="margin-bottom: 10px;">
+                                <h6 style="color: #007bff; margin-bottom: 5px; cursor: pointer;" onclick="showSql('${operationString}')">${group.scriptName}:${localIdx}</h6>
+                                <div style="background: #f8f9fa; padding: 8px; border-radius: 4px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 11px; line-height: 1.3; max-height: 150px; overflow-y: auto; border: 1px solid #e9ecef;">
+${sqlStatement}
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+            });
+            
+            content += `</div>`;
+        });
+        
+        content += `</div>`;
+        networkModalContent.innerHTML = content;
+    }
+    
+    networkModal.style.display = 'block';
+}
+
 function showAllTablesNetwork() {
     selectedNetworkScript = null;
     selectedTableFilters = [];
@@ -2990,15 +3527,29 @@ window.onclick = function(event) {
     if (event.target === networkStatsModal) {
         closeNetworkStatsModal();
     }
+    
+    // Hide custom tooltip when clicking outside
+    if (currentTooltip && currentTooltip.parentNode && !currentTooltip.contains(event.target)) {
+        hideCustomTooltip();
+    }
 }
 
 // Global click and keyboard handlers are now handled by the consolidated event system
 
+// Hide tooltip on window resize
+window.addEventListener('resize', function() {
+    if (currentTooltip) {
+        hideCustomTooltip();
+    }
+});
+
 // Search/filter for network node by name
 
 function initializeTableNames() {
-    if (allNodes) {
+    if (allNodes && Object.keys(allNodes).length > 0) {
         allTableNames = Object.values(allNodes).map(node => node.name).sort();
+    } else {
+        allTableNames = [];
     }
 }
 
@@ -3006,7 +3557,7 @@ function initializeTableNames() {
 
 function searchNetworkNode() {
     const input = document.getElementById('networkNodeSearchInput');
-    const query = input.value.trim().toLowerCase();
+    const query = input.value.trim();
     if (!query) {
         if (selectedNetworkScript) {
             // Show all tables from the selected script
@@ -3020,32 +3571,16 @@ function searchNetworkNode() {
         return;
     }
     
-    // Find all nodes that match (case-insensitive, partial match)
-    const matchedNodes = Object.values(allNodes).filter(node => 
-        node.name.toLowerCase().includes(query)
-    );
-    
-    if (matchedNodes.length === 1) {
-        // Single match - show directly related nodes
-        showDirectlyRelatedNodes(matchedNodes[0].id);
-        hideAutocompleteDropdown();
-    } else if (matchedNodes.length > 1) {
-        // Multiple matches - filter by table names
-        const tableNames = matchedNodes.map(node => node.name);
-        selectedTableFilters = tableNames;
-        createNetworkVisualization(selectedNetworkScript ? [selectedNetworkScript] : [], tableNames);
+    // Find exact match (case-insensitive) in table names
+    const match = allTableNames.find(name => name.toLowerCase() === query.toLowerCase());
+    if (match) {
+        selectedTableFilters = [match];
         updateSelectedScriptLabel();
+        createNetworkVisualization(selectedNetworkScript ? [selectedNetworkScript] : [], [match]);
         hideAutocompleteDropdown();
     } else {
-        // Show empty network with a message
-        const container = document.getElementById('networkContainer');
-        container.innerHTML = '<div style="padding: 40px; color: #dc3545; text-align: center; font-size: 1.2em;">No table found matching that name.</div>';
-        if (network) {
-            network.destroy();
-            network = null;
-        }
-        selectedTableFilters = [];
-        updateSelectedScriptLabel();
+        // No match, show error or do nothing
+        alert('No table found matching that name.');
     }
 }
 
@@ -3091,9 +3626,9 @@ function updateAutocompleteDropdown() {
     );
     
     if (filteredTableNames.length > 0) {
-        // Create dropdown items
+        // Create dropdown items with proper selection highlighting
         dropdown.innerHTML = filteredTableNames.map((tableName, index) => 
-            `<div class="autocomplete-item" onclick="selectAutocompleteItem(${index})">${tableName}</div>`
+            `<div class="autocomplete-item${index === selectedAutocompleteIndex ? ' selected' : ''}" onclick="selectAutocompleteItem(${index})">${tableName}</div>`
         ).join('');
         showAutocompleteDropdown();
     } else {
@@ -3106,24 +3641,18 @@ function selectAutocompleteItem(index) {
         const selectedTable = filteredTableNames[index];
         document.getElementById('networkNodeSearchInput').value = selectedTable;
         hideAutocompleteDropdown();
-        showDirectlyRelatedNodes(selectedTable);
+        searchNetworkNode();
     }
 }
 
 function navigateAutocomplete(direction) {
-    const items = document.querySelectorAll('.autocomplete-item');
-    if (items.length === 0) return;
-    
+    if (filteredTableNames.length === 0) return;
     if (direction === 'up') {
-        selectedAutocompleteIndex = selectedAutocompleteIndex <= 0 ? items.length - 1 : selectedAutocompleteIndex - 1;
+        selectedAutocompleteIndex = selectedAutocompleteIndex <= 0 ? filteredTableNames.length - 1 : selectedAutocompleteIndex - 1;
     } else if (direction === 'down') {
-        selectedAutocompleteIndex = selectedAutocompleteIndex >= items.length - 1 ? 0 : selectedAutocompleteIndex + 1;
+        selectedAutocompleteIndex = selectedAutocompleteIndex >= filteredTableNames.length - 1 ? 0 : selectedAutocompleteIndex + 1;
     }
-    
-    // Update visual selection
-    items.forEach((item, index) => {
-        item.classList.toggle('selected', index === selectedAutocompleteIndex);
-    });
+    updateAutocompleteDropdown();
 }
 
 // Table autocomplete events are now handled by the consolidated event system
@@ -3437,20 +3966,10 @@ function applyFilters(scriptFilters = [], tableFilters = [], mode = 'direct') {
         .filter(([from, to, operations]) => {
             // Remove edges that have no operations after filtering
             if (!operations || operations.length === 0) {
-                console.log(`Filtering out edge with no operations: ${from} -> ${to}`);
                 return false;
             }
             return true;
         });
-    
-    console.log('Filter applied:', {
-        scriptFilters,
-        tableFilters,
-        mode,
-        filteredNodes: filteredNodes.length,
-        filteredEdges: filteredEdges.length,
-        relatedNodeIds: relatedNodeIds ? relatedNodeIds.size : 0
-    });
     
     return { 
         nodes: filteredNodes.map(([id, node]) => ({ id, ...node })), 
@@ -4326,4 +4845,117 @@ function initializeZoomKeyboardShortcuts() {
             }
         }
     });
+}
+
+// Function to show self edges for a node
+function showSelfEdges(nodeId) {
+    const networkModal = document.getElementById('networkModal');
+    const networkModalTitle = document.getElementById('networkModalTitle');
+    const networkModalContent = document.getElementById('networkModalContent');
+    
+    // Get current filtered edges
+    const { edges: filteredEdges } = applyFilters(
+        selectedNetworkScript ? [selectedNetworkScript] : [], 
+        selectedTableFilters, 
+        connectionMode
+    );
+    
+    // Find self edges for this node
+    const selfEdges = getSelfEdges(nodeId, filteredEdges);
+    
+    // Get node name
+    const node = allNodes[nodeId];
+    const nodeName = node ? node.name : nodeId;
+    
+    // Update title
+    networkModalTitle.textContent = `Self Edges for ${nodeName}`;
+    
+    // Create content
+    let content = `
+        <div style="margin-bottom: 20px;">
+            <h4 style="color: #495057; margin-bottom: 10px;">Self-Referencing Operations</h4>
+            <p><strong>Table:</strong> ${nodeName}</p>
+            <p><strong>Self Edge Count:</strong> ${selfEdges.length}</p>
+        </div>
+    `;
+    
+    if (selfEdges.length === 0) {
+        content += `
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; color: #6c757d;">
+                <p>No self-referencing operations found for this table.</p>
+                <p style="font-size: 0.9em; margin-top: 10px;">Self edges typically represent UPDATE operations where a table modifies its own data.</p>
+            </div>
+        `;
+    } else {
+        content += `<div style="border-top: 1px solid #dee2e6; padding-top: 20px;">
+            <h4 style="color: #495057; margin-bottom: 15px;">SQL Statements</h4>
+        `;
+        
+        // Process each self edge
+        selfEdges.forEach(([from, to, operations], index) => {
+            // Parse operations
+            let opGroups = [];
+            if (operations && operations.length > 0) {
+                const operationTexts = getOperationDisplayText(operations);
+                operationTexts.split(',').forEach(part => {
+                    const trimmed = part.trim();
+                    const match = trimmed.match(/^(.*?):([\d|]+)$/);
+                    if (match) {
+                        const scriptName = match[1];
+                        const indices = match[2].split('|').map(x => parseInt(x, 10)).filter(x => !isNaN(x));
+                        if (indices.length > 0) {
+                            opGroups.push({scriptName, indices});
+                        }
+                    }
+                });
+            }
+            
+            content += `
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #dee2e6;">
+                    <h5 style="color: #ff6b35; margin-bottom: 10px;">${nodeName} → ${nodeName} (Self-Reference)</h5>
+                    <p style="color: #6c757d; margin-bottom: 10px; font-size: 0.9em;">Operations: ${operations ? getOperationDisplayText(operations) : 'None'}</p>
+            `;
+            
+            // Add SQL statements for each operation group
+            opGroups.forEach(group => {
+                const scriptData = lineageData.scripts && lineageData.scripts[group.scriptName];
+                if (scriptData) {
+                    content += `
+                        <div style="margin-bottom: 15px;">
+                            <h6 style="color: #ff6b35; margin-bottom: 10px;">Script: ${group.scriptName}</h6>
+                    `;
+                    
+                    group.indices.forEach(localIdx => {
+                        let sqlStatement = null;
+                        if (scriptData && scriptData.bteq_statements && scriptData.bteq_statements.length > localIdx) {
+                            sqlStatement = scriptData.bteq_statements[localIdx];
+                        } else if (!lineageData.scripts && lineageData.bteq_statements && lineageData.bteq_statements.length > localIdx) {
+                            sqlStatement = lineageData.bteq_statements[localIdx];
+                        }
+                        if (sqlStatement) {
+                            // Create operation string in new format for clickable link
+                            const operationString = `${group.scriptName}::op${localIdx}`;
+                            content += `
+                                <div style="margin-bottom: 10px;">
+                                    <h6 style="color: #ff6b35; margin-bottom: 5px; cursor: pointer;" onclick="showSql('${operationString}')">${group.scriptName}:${localIdx}</h6>
+                                    <div style="background: #f8f9fa; padding: 8px; border-radius: 4px; font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 11px; line-height: 1.3; max-height: 150px; overflow-y: auto; border: 1px solid #e9ecef;">
+${sqlStatement}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    });
+                    
+                    content += `</div>`;
+                }
+            });
+            
+            content += `</div>`;
+        });
+        
+        content += `</div>`;
+    }
+    
+    networkModalContent.innerHTML = content;
+    networkModal.style.display = 'block';
 }
