@@ -2691,7 +2691,8 @@ function analyzeNetworkAlgorithm(nodes, edges) {
 
 function loadAllLineageFiles() {
     // Load the all_lineage.txt file and process all JSON files listed in it
-    fetch('../report/all_lineage.txt')
+    console.log('Loading from /report/all_lineage.txt');
+    fetch('/report/all_lineage.txt')
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -2719,7 +2720,7 @@ function loadAllLineageFiles() {
             // Process each JSON file
             jsonFiles.forEach((jsonFile, index) => {
                 // Use the JSON file path as-is (relative to all_lineage.txt location)
-                fetch(`../report/${jsonFile}`)
+                fetch(`/report/${jsonFile}`)
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`HTTP error! status: ${response.status}`);
@@ -2770,7 +2771,7 @@ function loadAllLineageFiles() {
             });
         })
         .catch(error => {
-            showError('Error loading all_lineage.txt. Make sure the file exists in the ../report/ directory: ' + error.message);
+            showError('Error loading all_lineage.txt. Make sure the file exists in the /report/ directory: ' + error.message);
         });
 }
 

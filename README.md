@@ -1,10 +1,14 @@
-# ETL Lineage Analyzer
+# Lineage Analyzer Tools
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-A powerful Python tool for analyzing ETL shell scripts and SQL files to extract comprehensive data lineage information. Identifies source tables, target tables, and the relationships between them with an interactive HTML viewer for exploring lineage relationships.
+A comprehensive toolkit for ETL data lineage analysis with three specialized tools:
+
+1. **SQL Extractor**: Extracts Teradata SQL from shell scripts
+2. **Lineage Analyzer**: Analyzes SQL files to extract data lineage using SQLGlot parser
+3. **Lineage Viewer**: Interactive HTML visualization of lineage relationships
 
 ## 🚀 Quick Start
 
@@ -14,32 +18,46 @@ git clone https://github.com/harrydu-db/lineage-analyzer.git
 cd lineage-analyzer
 
 # Install dependencies
-pip install sqlparse
+pip install -r requirements.txt
 
-# Analyze your ETL scripts
-python src/lineage_analyzer/lineage.py your_scripts_folder/ output_reports/
+# Step 1: Extract SQL from shell scripts (if needed)
+python src/sql_extractor/extract_sql.py your_shell_scripts/ extracted_sql/
 
-# Open the interactive HTML viewer
+# Step 2: Analyze SQL files for lineage
+python src/lineage_analyzer/lineage.py extracted_sql/ lineage_reports/
+
+# Step 3: Open the interactive HTML viewer
+# Option 1: Direct file opening
 open src/lineage_viewer/lineage_viewer.html
+
+# Option 2: Local HTTP server (recommended)
+python -m http.server 8000
+# Then visit http://localhost:8000/src/lineage_viewer/lineage_viewer.html
 ```
 
 ## ✨ Features
 
-### Core Analysis
+### 1. SQL Extractor
+- **🔍 Shell Script Processing**: Extracts SQL from `.sh` and `.ksh` files
+- **📝 BTEQ Command Handling**: Processes `bteq <<EOF ... EOF` heredoc blocks
+- **🧹 SQL Cleaning**: Removes BTEQ control statements and comments
+- **📁 Batch Processing**: Processes multiple shell scripts at once
+
+### 2. Lineage Analyzer
 - **📊 Comprehensive Lineage Extraction**: Identifies source tables, target tables, and data flow relationships
-- **🔍 Multi-Format Support**: Processes `.sh`, `.ksh`, and `.sql` files automatically
+- **🔍 SQL File Support**: Processes `.sql` files using SQLGlot parser for accurate parsing
 - **⚡ Volatile Table Detection**: Recognizes temporary tables created during ETL processes
 - **📝 Line Number Tracking**: Provides accurate line numbers for each operation
 - **🔄 Relationship Mapping**: Shows complete data flow between tables
 
-### Interactive HTML Viewer
+### 3. Lineage Viewer
 - **📋 Tables Tab**: Browse table relationships and lineage details
-- **🔧 Statements Tab**: View formatted BTEQ SQL statements with syntax highlighting
+- **🔧 Statements Tab**: View formatted SQL statements with syntax highlighting
 - **🕸️ Network View**: Interactive network visualization of data flow
 - **🔍 Search & Filter**: Find specific tables or statements quickly
 - **📊 Network Statistics**: Detailed insights about your data lineage network
 
-### Advanced Network Features
+#### Advanced Network Features
 - **🎯 Direct/Indirect Mode**: Toggle between direct connections and full chain visibility
 - **🔒 View Locking**: Lock the current view to prevent accidental filter changes
 - **🔍 Script Search**: Filter network by specific script names
@@ -48,7 +66,7 @@ open src/lineage_viewer/lineage_viewer.html
 
 ## 📁 Supported File Types
 
-### Shell Scripts (`.sh`, `.ksh`)
+### Shell Scripts (`.sh`, `.ksh`) - SQL Extractor
 Extracts SQL from `bteq <<EOF ... EOF` heredoc blocks:
 ```bash
 #!/bin/bash
@@ -62,17 +80,14 @@ INSERT INTO target.table SELECT * FROM temp.staging;
 EOF
 ```
 
-### SQL Files (`.sql`)
-Direct SQL files without shell script wrappers:
+### SQL Files (`.sql`) - Lineage Analyzer
+Direct SQL file processing using SQLGlot parser for accurate parsing:
 ```sql
 CREATE VOLATILE TABLE temp.staging AS (
     SELECT * FROM source.table
 );
 INSERT INTO target.table SELECT * FROM temp.staging;
 ```
-
-### Mixed Content Files
-Intelligently handles files with both shell and SQL content.
 
 ## 🛠️ Installation
 
@@ -82,42 +97,52 @@ Intelligently handles files with both shell and SQL content.
 
 ### Dependencies
 ```bash
-pip install sqlparse
+pip install -r requirements.txt
 ```
 
 ## 📖 Usage
 
-### Batch Processing (Recommended)
+### Complete Workflow
 
-Process all ETL scripts in a folder:
-
+#### Step 1: Extract SQL from Shell Scripts (if needed)
 ```bash
-python src/lineage_analyzer/lineage.py <input_folder> <output_folder>
+# Extract SQL from shell scripts
+python src/sql_extractor/extract_sql.py <shell_scripts_folder> <output_sql_folder>
+
+# Example:
+python src/sql_extractor/extract_sql.py Lotmaster_scripts/ extracted_sql/
 ```
 
-**Example:**
+#### Step 2: Analyze SQL Files for Lineage
 ```bash
-python src/lineage_analyzer/lineage.py old/Lotmaster_scripts/ reports/
+# Process all SQL files in a folder
+python src/lineage_analyzer/lineage.py <sql_folder> <output_folder>
+
+# Example:
+python src/lineage_analyzer/lineage.py extracted_sql/ lineage_reports/
+
+# Single file analysis
+python src/lineage_analyzer/lineage.py my_script.sql --report
+python src/lineage_analyzer/lineage.py my_script.sql --export lineage.json
 ```
 
-**Output:**
-- Individual JSON reports for each script (`*_lineage.json`)
-- Cleaned BTEQ SQL files (`*.bteq`)
-- Processing summary (`processing_summary.yaml`)
-- List of all generated files (`all_lineage.txt`)
-
-### Single File Analysis
-
+#### Step 3: Visualize Lineage Data
 ```bash
-# Show detailed console report
-python src/lineage_analyzer/lineage.py BatchTrack.sh --report
+# Option 1: Open directly in browser (may have CORS limitations)
+open src/lineage_viewer/lineage_viewer.html
 
-# Export to specific JSON file
-python src/lineage_analyzer/lineage.py BatchTrack.sh --export lineage.json
-
-# Export to output folder (creates both JSON and .bteq files)
-python src/lineage_analyzer/lineage.py BatchTrack.sh output_folder/
+# Option 2: Run local HTTP server (recommended)
+python -m http.server 8000
+# Then open http://localhost:8000/src/lineage_viewer/lineage_viewer.html in your browser
 ```
+
+### Output Files
+- **SQL Extractor**: Clean SQL files (`.sql`)
+- **Lineage Analyzer**: 
+  - Individual JSON reports (`*_lineage.json`)
+  - Formatted SQL files (`*.bteq`)
+  - Processing summary (`processing_summary.yaml`)
+  - List of all generated files (`all_lineage.txt`)
 
 ### Interactive HTML Viewer
 
@@ -134,7 +159,7 @@ python src/lineage_analyzer/lineage.py BatchTrack.sh output_folder/
 Machine-readable format with complete lineage data:
 ```json
 {
-  "script_name": "BatchTrack.sh",
+  "script_name": "my_script.sql",
   "bteq_statements": [
     "CREATE MULTISET VOLATILE TABLE temp.staging AS\n    (SELECT ...)",
     "INSERT INTO warehouse.final_table\nSELECT ..."
@@ -160,8 +185,8 @@ Machine-readable format with complete lineage data:
 }
 ```
 
-### BTEQ SQL Files
-Cleaned SQL statements without BTEQ control commands:
+### SQL Files
+Formatted SQL statements:
 ```sql
 CREATE MULTISET VOLATILE TABLE temp.staging AS (
     SELECT 
@@ -210,9 +235,9 @@ The analyzer recognizes and extracts lineage from:
 
 ## 🎯 Table Name Extraction
 
-### Multi-Method Approach
-1. **sqlparse Library**: Structured SQL parsing for complex statements
-2. **Enhanced Regex Patterns**: Handles complex FROM/JOIN clauses
+### SQLGlot Parser Approach
+1. **SQLGlot Library**: Advanced SQL parsing with Teradata dialect support
+2. **AST-based Analysis**: Accurate parsing using Abstract Syntax Trees
 3. **Subquery Detection**: Extracts tables from nested queries
 4. **Alias Handling**: Intelligently filters single-letter aliases
 
@@ -291,17 +316,17 @@ The tool gracefully handles:
 - Malformed SQL syntax
 - Missing input/output folders
 - Permission issues
-- BTEQ control statements
+- Complex SQL syntax
 - Complex nested subqueries
 
 Failed files are logged in the processing summary with detailed error information.
 
 ## 🔧 Advanced Features
 
-### BTEQ Statement Cleaning
-- Removes BTEQ control statements (`.LOGON`, `.LOGOFF`, `.SET`, etc.)
+### SQL Statement Formatting
+- Formats SQL statements for better readability
 - Preserves CREATE VOLATILE TABLE statements
-- Maintains SQL formatting and readability
+- Maintains proper SQL formatting and indentation
 
 ### Network Analysis
 - **Connection Analysis**: Identifies data flow patterns
@@ -311,7 +336,7 @@ Failed files are logged in the processing summary with detailed error informatio
 
 ### Export Options
 - **JSON Export**: Machine-readable lineage data
-- **BTEQ SQL Export**: Cleaned SQL statements
+- **SQL Export**: Formatted SQL statements
 - **Console Reports**: Human-readable formatted output
 - **Processing Summary**: Batch processing statistics
 
@@ -336,7 +361,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Built with [sqlparse](https://github.com/andialbrecht/sqlparse) for SQL parsing
+- Built with [SQLGlot](https://github.com/tobymao/sqlglot) for SQL parsing
 - Network visualization powered by [vis.js](https://visjs.org/)
 - Modern UI components and styling
 - Made with help from Cursor. 

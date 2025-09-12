@@ -1,5 +1,5 @@
 -- Extracted SQL statements from shell script
--- Total statements: 6
+-- Total statements: 5
 -- ============================================================
 
 -- Statement 1 (Original line: 1)
@@ -77,7 +77,4 @@ SELECT 'SALES_ETL' AS process_name,
                        'COMPLETED' AS status
 FROM SALES_REPORTING
 WHERE report_date = CURRENT_DATE;
-
--- Statement 6 (Original line: 76)
-ET;
 
