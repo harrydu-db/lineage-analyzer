@@ -1,3 +1,0 @@
-PRODUCT_DIM_sql_lineage.json
-sample_sh_lineage.json
-sample_sql_lineage.json
