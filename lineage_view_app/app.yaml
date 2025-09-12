@@ -1,0 +1,3 @@
+name: "ETL Lineage Viewer"
+description: "Visualize data lineage relationships from your ETL scripts"
+command: ["uvicorn", "app:app"]

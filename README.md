@@ -28,11 +28,12 @@ python src/lineage_analyzer/lineage.py extracted_sql/ lineage_reports/
 
 # Step 3: Open the interactive HTML viewer
 # Option 1: Direct file opening
-open src/lineage_viewer/lineage_viewer.html
+open lineage_view_app/lineage_viewer/index.html
 
 # Option 2: Local HTTP server (recommended)
+cd lineage_view_app
 python -m http.server 8000
-# Then visit http://localhost:8000/src/lineage_viewer/lineage_viewer.html
+# Then visit http://localhost:8000/lineage_viewer/index.html
 ```
 
 ## ✨ Features
@@ -127,14 +128,32 @@ python src/lineage_analyzer/lineage.py my_script.sql --export lineage.json
 ```
 
 #### Step 3: Visualize Lineage Data
+
+##### Option A: Standalone HTML Viewer
 ```bash
 # Option 1: Open directly in browser (may have CORS limitations)
-open src/lineage_viewer/lineage_viewer.html
+open lineage_viewer_app/lineage_viewer/index.html
 
 # Option 2: Run local HTTP server (recommended)
+```bash
+cd lineage_view_app
 python -m http.server 8000
-# Then open http://localhost:8000/src/lineage_viewer/lineage_viewer.html in your browser
 ```
+Then open http://localhost:8000/lineage_viewer/index.html in your browser
+
+
+##### Option B: Lineage View App (FastAPI-based)
+The `lineage_view_app` provides a more robust web application with better file handling and deployment options.
+
+**Run locally:**
+```bash
+cd lineage_view_app
+python app.py
+```
+Then open http://localhost:8000/lineage_viewer/index.html in your browser
+
+**Deploy to Databricks Apps:**
+See the detailed deployment instructions in the [lineage_view_app README](lineage_view_app/README.md) for deploying to Databricks Apps.
 
 ### Output Files
 - **SQL Extractor**: Clean SQL files (`.sql`)
