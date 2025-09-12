@@ -17,10 +17,10 @@ cd lineage-analyzer
 pip install sqlparse
 
 # Analyze your ETL scripts
-python src/lineage.py your_scripts_folder/ output_reports/
+python src/lineage_analyzer/lineage.py your_scripts_folder/ output_reports/
 
 # Open the interactive HTML viewer
-open src/lineage_viewer.html
+open src/lineage_viewer/lineage_viewer.html
 ```
 
 ## ✨ Features
@@ -92,12 +92,12 @@ pip install sqlparse
 Process all ETL scripts in a folder:
 
 ```bash
-python src/lineage.py <input_folder> <output_folder>
+python src/lineage_analyzer/lineage.py <input_folder> <output_folder>
 ```
 
 **Example:**
 ```bash
-python src/lineage.py old/Lotmaster_scripts/ reports/
+python src/lineage_analyzer/lineage.py old/Lotmaster_scripts/ reports/
 ```
 
 **Output:**
@@ -110,13 +110,13 @@ python src/lineage.py old/Lotmaster_scripts/ reports/
 
 ```bash
 # Show detailed console report
-python src/lineage.py BatchTrack.sh --report
+python src/lineage_analyzer/lineage.py BatchTrack.sh --report
 
 # Export to specific JSON file
-python src/lineage.py BatchTrack.sh --export lineage.json
+python src/lineage_analyzer/lineage.py BatchTrack.sh --export lineage.json
 
 # Export to output folder (creates both JSON and .bteq files)
-python src/lineage.py BatchTrack.sh output_folder/
+python src/lineage_analyzer/lineage.py BatchTrack.sh output_folder/
 ```
 
 ### Interactive HTML Viewer

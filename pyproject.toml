@@ -52,7 +52,7 @@ Repository = "https://github.com/your-username/lineage-analyzer"
 "Bug Tracker" = "https://github.com/your-username/lineage-analyzer/issues"
 
 [project.scripts]
-lineage-analyzer = "lineage:main"
+lineage-analyzer = "lineage_analyzer.lineage:main"
 
 [tool.black]
 line-length = 88

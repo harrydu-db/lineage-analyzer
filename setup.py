@@ -61,7 +61,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "lineage-analyzer=lineage:main",
+            "lineage-analyzer=lineage_analyzer.lineage:main",
         ],
     },
     keywords="etl, lineage, sql, data, analysis, teradata, shell-scripts",

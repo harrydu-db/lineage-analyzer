@@ -7,7 +7,7 @@ import tempfile
 import os
 import json
 from pathlib import Path
-from src.lineage import ETLLineageAnalyzer, LineageInfo, TableOperation
+from src.lineage_analyzer.lineage import ETLLineageAnalyzer, LineageInfo, TableOperation
 
 
 class TestETLLineageAnalyzer:
