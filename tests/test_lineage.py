@@ -16,6 +16,8 @@ class TestETLLineageAnalyzer:
     def setup_method(self):
         """Set up test fixtures"""
         self.analyzer = ETLLineageAnalyzerSQLGlot()
+        self.spark_analyzer = ETLLineageAnalyzerSQLGlot(dialect="spark")
+        self.spark2_analyzer = ETLLineageAnalyzerSQLGlot(dialect="spark2")
 
 
     def test_extract_sql_blocks_from_sql_file(self):
@@ -58,9 +60,9 @@ class TestETLLineageAnalyzer:
             assert lineage_info.script_name == os.path.basename(temp_file)
             # The analyzer correctly identifies temp_table as a source table
             # since it's created from source_table in the CREATE VOLATILE statement
-            assert "temp_table" in lineage_info.source_tables
-            assert "target_table" in lineage_info.target_tables
-            assert "temp_table" in lineage_info.volatile_tables
+            assert "TEMP_TABLE" in lineage_info.source_tables
+            assert "TARGET_TABLE" in lineage_info.target_tables
+            assert "TEMP_TABLE" in lineage_info.volatile_tables
             
         finally:
             os.unlink(temp_file)
@@ -159,14 +161,14 @@ class TestETLLineageAnalyzer:
         # Check CREATE VOLATILE operation
         create_op = operations[0]
         assert create_op.operation_type == "CREATE_VOLATILE"
-        assert create_op.target_table == "temp_table"
-        assert "source_table" in create_op.source_tables
+        assert create_op.target_table == "TEMP_TABLE"
+        assert "SOURCE_TABLE" in create_op.source_tables
         
         # Check INSERT operation
         insert_op = operations[1]
         assert insert_op.operation_type == "INSERT"
-        assert insert_op.target_table == "target_table"
-        assert "temp_table" in insert_op.source_tables
+        assert insert_op.target_table == "TARGET_TABLE"
+        assert "TEMP_TABLE" in insert_op.source_tables
 
     def test_process_folder(self):
         """Test folder processing functionality"""
@@ -243,13 +245,13 @@ class TestETLLineageAnalyzer:
         """Test different CREATE VIEW statement variations"""
         test_cases = [
             # Standard CREATE VIEW
-            ("CREATE VIEW schema.view_name AS SELECT * FROM table1", "schema.view_name", ["table1"]),
+            ("CREATE VIEW schema.view_name AS SELECT * FROM table1", "SCHEMA.VIEW_NAME", ["TABLE1"]),
             # CREATE VIEW with IF NOT EXISTS
-            ("CREATE VIEW IF NOT EXISTS view_name AS SELECT * FROM table1", "view_name", ["table1"]),
+            ("CREATE VIEW IF NOT EXISTS view_name AS SELECT * FROM table1", "VIEW_NAME", ["TABLE1"]),
             # CREATE VIEW with schema and IF NOT EXISTS
-            ("CREATE VIEW IF NOT EXISTS schema.view_name AS SELECT * FROM schema.table1", "schema.view_name", ["schema.table1"]),
+            ("CREATE VIEW IF NOT EXISTS schema.view_name AS SELECT * FROM schema.table1", "SCHEMA.VIEW_NAME", ["SCHEMA.TABLE1"]),
             # CREATE VIEW with multiple source tables
-            ("CREATE VIEW view_name AS SELECT * FROM table1 JOIN table2 ON table1.id = table2.id", "view_name", ["table1", "table2"]),
+            ("CREATE VIEW view_name AS SELECT * FROM table1 JOIN table2 ON table1.id = table2.id", "VIEW_NAME", ["TABLE1", "TABLE2"]),
         ]
         
         for sql_content, expected_target, expected_sources in test_cases:
@@ -279,6 +281,174 @@ class TestETLLineageAnalyzer:
                 
             finally:
                 os.unlink(temp_file)
+
+    def test_case_insensitive_table_names(self):
+        """Test that table names are handled case-insensitively"""
+        sql_content = """
+        CREATE MULTISET VOLATILE TABLE VT_first_fab_enterprise_lot_id AS
+        (
+            SELECT DISTINCT first_fab_enterprise_lot_id, enterprise_lot_id, TIB_TRACKINGID
+            FROM edw.mfg_lot_actv A, bizt.PROMIS_STARTLOT_SOURCELOTLIST_V B
+            WHERE a.enterprise_lot_id = SourceLotId
+            AND characters(trim(first_fab_enterprise_lot_id)) > 0
+            AND TIB_TRACKINGID in (SELECT TIB_TRACKINGID FROM BIZT.BIZT_RESP_MSG_LM_V WHERE LM_PROCESSING_STATUS ='INPROC' AND TRIM(BIZT_NAME) ='LOTSTART' )
+            qualify row_number() over(partition by a.enterprise_lot_id order by lot_last_updt_dttm desc)=1
+        )WITH DATA
+        ON COMMIT PRESERVE ROWS;
+        
+        INSERT INTO LOTMASTER_BASE_T.MFG_LOT_ACTV (FIRST_FAB_ENTERPRISE_LOT_ID)
+        SELECT F.FIRST_FAB_ENTERPRISE_LOT_ID
+        FROM VT_FIRST_FAB_ENTERPRISE_LOT_ID F;
+        """
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+            f.write(sql_content)
+            temp_file = f.name
+        
+        try:
+            lineage_info = self.analyzer.analyze_script(temp_file)
+            
+            assert isinstance(lineage_info, LineageInfo)
+            assert lineage_info.script_name == os.path.basename(temp_file)
+            
+            # Check that table names are normalized to uppercase
+            assert "VT_FIRST_FAB_ENTERPRISE_LOT_ID" in lineage_info.target_tables
+            assert "VT_FIRST_FAB_ENTERPRISE_LOT_ID" in lineage_info.volatile_tables
+            assert "EDW.MFG_LOT_ACTV" in lineage_info.source_tables
+            assert "BIZT.PROMIS_STARTLOT_SOURCELOTLIST_V" in lineage_info.source_tables
+            assert "LOTMASTER_BASE_T.MFG_LOT_ACTV" in lineage_info.target_tables
+            
+            # Verify there are no duplicate table entries with different cases
+            target_tables_lower = {table.lower() for table in lineage_info.target_tables}
+            source_tables_lower = {table.lower() for table in lineage_info.source_tables}
+            volatile_tables_lower = {table.lower() for table in lineage_info.volatile_tables}
+            
+            # Check that we don't have duplicates (same table with different cases)
+            assert len(target_tables_lower) == len(lineage_info.target_tables), "Duplicate table names found in target_tables"
+            assert len(source_tables_lower) == len(lineage_info.source_tables), "Duplicate table names found in source_tables"
+            assert len(volatile_tables_lower) == len(lineage_info.volatile_tables), "Duplicate table names found in volatile_tables"
+            
+            # Check that the volatile table is correctly identified
+            assert "VT_FIRST_FAB_ENTERPRISE_LOT_ID" in lineage_info.volatile_tables
+            
+            # Check operations
+            assert len(lineage_info.operations) == 2
+            
+            # Check CREATE VOLATILE operation
+            create_op = lineage_info.operations[0]
+            assert create_op.operation_type == "CREATE_VOLATILE"
+            assert create_op.target_table == "VT_FIRST_FAB_ENTERPRISE_LOT_ID"
+            assert create_op.is_volatile == True
+            
+            # Check INSERT operation
+            insert_op = lineage_info.operations[1]
+            assert insert_op.operation_type == "INSERT"
+            assert insert_op.target_table == "LOTMASTER_BASE_T.MFG_LOT_ACTV"
+            assert "VT_FIRST_FAB_ENTERPRISE_LOT_ID" in insert_op.source_tables
+            
+        finally:
+            os.unlink(temp_file)
+
+    def test_table_name_normalization_with_schemas(self):
+        """Test that table names with schemas are normalized correctly"""
+        sql_content = """
+        CREATE VOLATILE TABLE temp_table AS (
+            SELECT * FROM schema1.source_table
+        );
+        
+        INSERT INTO Schema2.Target_Table
+        SELECT * FROM temp_table;
+        """
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+            f.write(sql_content)
+            temp_file = f.name
+        
+        try:
+            lineage_info = self.analyzer.analyze_script(temp_file)
+            
+            # Check that schema names are also normalized to uppercase
+            assert "SCHEMA1.SOURCE_TABLE" in lineage_info.source_tables
+            assert "SCHEMA2.TARGET_TABLE" in lineage_info.target_tables
+            assert "TEMP_TABLE" in lineage_info.target_tables
+            assert "TEMP_TABLE" in lineage_info.volatile_tables
+            
+            # Verify no duplicates exist
+            all_tables = list(lineage_info.source_tables) + list(lineage_info.target_tables)
+            all_tables_lower = {table.lower() for table in all_tables}
+            assert len(all_tables_lower) == len(set(all_tables)), "Duplicate table names found"
+            
+        finally:
+            os.unlink(temp_file)
+
+    def test_spark_dialect_support(self):
+        """Test that Spark dialect is properly supported"""
+        # Test Spark SQL syntax
+        spark_sql = """
+        CREATE TABLE IF NOT EXISTS spark_table AS
+        SELECT 
+            col1,
+            col2,
+            col3
+        FROM source_table
+        WHERE col1 > 0
+        """
+        
+        # Test with Spark dialect using temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+            f.write(spark_sql)
+            temp_file = f.name
+        
+        try:
+            lineage_info = self.spark_analyzer.analyze_script(temp_file)
+            
+            assert lineage_info is not None
+            assert len(lineage_info.operations) > 0
+            
+            # Check that the operation was parsed correctly
+            create_operation = next((op for op in lineage_info.operations if op.operation_type == "CREATE"), None)
+            assert create_operation is not None
+            assert create_operation.target_table == "SPARK_TABLE"
+            assert "SOURCE_TABLE" in create_operation.source_tables
+        finally:
+            os.unlink(temp_file)
+
+    def test_spark2_dialect_support(self):
+        """Test that Spark2 dialect is properly supported"""
+        # Test Spark2 SQL syntax
+        spark2_sql = """
+        CREATE OR REPLACE TABLE spark2_table AS
+        SELECT 
+            col1,
+            col2,
+            col3
+        FROM source_table
+        WHERE col1 > 0
+        """
+        
+        # Test with Spark2 dialect using temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False) as f:
+            f.write(spark2_sql)
+            temp_file = f.name
+        
+        try:
+            lineage_info = self.spark2_analyzer.analyze_script(temp_file)
+            
+            assert lineage_info is not None
+            assert len(lineage_info.operations) > 0
+            
+            # Check that the operation was parsed correctly
+            create_operation = next((op for op in lineage_info.operations if op.operation_type == "CREATE"), None)
+            assert create_operation is not None
+            assert create_operation.target_table == "SPARK2_TABLE"
+            assert "SOURCE_TABLE" in create_operation.source_tables
+        finally:
+            os.unlink(temp_file)
+
+    def test_invalid_dialect_raises_error(self):
+        """Test that invalid dialect raises ValueError"""
+        with pytest.raises(ValueError, match="Unsupported dialect"):
+            ETLLineageAnalyzerSQLGlot(dialect="invalid_dialect")
 
 
 class TestTableOperation:

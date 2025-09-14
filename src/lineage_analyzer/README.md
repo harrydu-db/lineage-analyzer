@@ -5,7 +5,7 @@ This is an enhanced version of the ETL Lineage Analyzer that uses [SQLGlot](http
 ## Features
 
 - **Accurate SQL Parsing**: Uses SQLGlot's robust SQL parser instead of regex patterns
-- **Teradata Support**: Full support for Teradata SQL syntax and dialects
+- **Multi-Dialect Support**: Full support for Teradata, Spark, and Spark2 SQL dialects
 - **Better Error Handling**: More informative error messages and warnings
 - **Enhanced Table Extraction**: More precise extraction of table relationships
 - **Same Interface**: Drop-in replacement for the original lineage analyzer
@@ -14,7 +14,7 @@ This is an enhanced version of the ETL Lineage Analyzer that uses [SQLGlot](http
 ## Key Improvements over Regex-based Analyzer
 
 1. **More Accurate Parsing**: SQLGlot provides proper AST-based parsing instead of regex matching
-2. **Better Teradata Support**: Handles complex Teradata-specific syntax correctly
+2. **Multi-Dialect Support**: Handles Teradata, Spark, and Spark2 SQL syntax correctly
 3. **Improved Table Detection**: More precise extraction of table names and relationships
 4. **Better Error Handling**: Graceful handling of parsing errors with detailed warnings
 5. **Extensible**: Easy to add support for additional SQL dialects
@@ -32,7 +32,7 @@ pip install sqlglot>=27.0.0
 ### Command Line Interface
 
 ```bash
-# Process all SQL files in a folder
+# Process all SQL files in a folder (default: Teradata dialect)
 python -m lineage_analyzer.lineage sql_files/ output_folder/
 
 # Analyze a single SQL file
@@ -43,6 +43,12 @@ python -m lineage_analyzer.lineage my_file.sql --export lineage.json
 
 # Show formatted report
 python -m lineage_analyzer.lineage my_file.sql --report
+
+# Analyze Spark SQL files
+python -m lineage_analyzer.lineage spark_files/ output_folder/ --dialect spark
+
+# Analyze Spark2 SQL files
+python -m lineage_analyzer.lineage spark2_files/ output_folder/ --dialect spark2
 ```
 
 ### Python API
@@ -50,8 +56,14 @@ python -m lineage_analyzer.lineage my_file.sql --report
 ```python
 from lineage_analyzer.lineage import ETLLineageAnalyzerSQLGlot
 
-# Initialize analyzer
+# Initialize analyzer with default Teradata dialect
 analyzer = ETLLineageAnalyzerSQLGlot()
+
+# Initialize analyzer with Spark dialect
+spark_analyzer = ETLLineageAnalyzerSQLGlot(dialect="spark")
+
+# Initialize analyzer with Spark2 dialect
+spark2_analyzer = ETLLineageAnalyzerSQLGlot(dialect="spark2")
 
 # Analyze a single file
 lineage_info = analyzer.analyze_script("my_file.sql")

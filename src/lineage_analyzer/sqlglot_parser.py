@@ -13,7 +13,7 @@ import sqlglot
 from sqlglot import parse_one, parse, Dialect
 from sqlglot.expressions import Select, Insert, Update, Delete, Create, Drop, Alter, Merge, CTE
 from sqlglot.expressions import Table, Column, Alias, Join, Union, Subquery, Where, And, Or, Not, In, From
-from sqlglot.dialects import Teradata
+from sqlglot.dialects import Teradata, Spark, Spark2
 
 
 @dataclass
@@ -23,6 +23,12 @@ class ParsedTable:
     alias: Optional[str] = None
     schema: Optional[str] = None
     is_subquery: bool = False
+    
+    def __post_init__(self):
+        """Initialize ParsedTable with no case normalization"""
+        # Preserve original case for both table names and schema names
+        # This allows the parser to maintain the exact case as found in SQL
+        pass
     
     @property
     def full_name(self) -> str:
@@ -47,12 +53,16 @@ class ParsedOperation:
 
 
 class SQLGlotParser:
-    """SQLGlot-based SQL parser for Teradata SQL statements"""
+    """SQLGlot-based SQL parser for SQL statements with configurable dialect support"""
     
-    def __init__(self):
-        """Initialize the SQLGlot parser with Teradata dialect support"""
+    def __init__(self, dialect: str = "teradata"):
+        """Initialize the SQLGlot parser with specified dialect support
+        
+        Args:
+            dialect: SQL dialect to use ('teradata', 'spark', 'spark2', etc.)
+        """
         self.logger = logging.getLogger(__name__)
-        self.dialect = Teradata()
+        self.dialect = self._get_dialect(dialect)
         
         # SQL keywords to filter out
         self.sql_keywords = {
@@ -66,6 +76,31 @@ class SQLGlotParser:
         
         # Common single-letter aliases to ignore
         self.common_aliases = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    
+    def _get_dialect(self, dialect: str) -> Dialect:
+        """Get the appropriate SQLGlot dialect object based on the dialect string
+        
+        Args:
+            dialect: Dialect string ('teradata', 'spark', 'spark2', etc.)
+            
+        Returns:
+            SQLGlot Dialect object
+            
+        Raises:
+            ValueError: If the dialect is not supported
+        """
+        dialect_map = {
+            "teradata": Teradata(),
+            "spark": Spark(),
+            "spark2": Spark2(),
+        }
+        
+        dialect_lower = dialect.lower()
+        if dialect_lower not in dialect_map:
+            supported_dialects = ", ".join(dialect_map.keys())
+            raise ValueError(f"Unsupported dialect '{dialect}'. Supported dialects: {supported_dialects}")
+        
+        return dialect_map[dialect_lower]
     
     def parse_sql_statement(self, sql: str, line_number: int = 1) -> Optional[ParsedOperation]:
         """
@@ -84,7 +119,7 @@ class SQLGlotParser:
             if not cleaned_sql.strip():
                 return None
             
-            # Parse using SQLGlot with Teradata dialect
+            # Parse using SQLGlot with specified dialect
             parsed = parse_one(cleaned_sql, dialect=self.dialect)
             if not parsed:
                 self.logger.warning(f"Failed to parse SQL at line {line_number}")

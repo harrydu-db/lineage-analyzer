@@ -1,11 +1,12 @@
 """
-Databricks App - ETL Lineage Viewer
-A FastAPI application that serves static HTML files for visualizing data lineage relationships.
+ETL Lineage Viewer
+A FastAPI application that serves both the legacy HTML viewer and the new React application.
 """
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+
 import os
 import uvicorn
 
@@ -13,17 +14,20 @@ import uvicorn
 app = FastAPI(
     title="ETL Lineage Viewer",
     description="Visualize data lineage relationships from your ETL scripts",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Mount static files directories
-app.mount("/lineage_viewer", StaticFiles(directory="lineage_viewer"), name="lineage_viewer")
-app.mount("/report", StaticFiles(directory="report"), name="report")
+app.mount("/report", StaticFiles(directory="lineage_viewer_react/build/report"), name="report")
+
+# Serve React app build files from root
+app.mount("/static", StaticFiles(directory="lineage_viewer_react/build/static"), name="static")
+app.mount("/assets", StaticFiles(directory="lineage_viewer_react/build"), name="assets")
 
 @app.get("/")
 async def read_root():
-    """Redirect root path to lineage viewer."""
-    return RedirectResponse(url="/lineage_viewer/index.html")
+    """Serve React application from root."""
+    return FileResponse("lineage_viewer_react/build/index.html")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

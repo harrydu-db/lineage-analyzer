@@ -1,0 +1,169 @@
+/* Network Tab Styles */
+.network-tab {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 200px);
+  min-height: 500px;
+  max-height: calc(100vh - 5px);
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.network-tab.fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: white;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.network-container-wrapper {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 400px;
+}
+
+.network-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Fullscreen toggle button */
+.fullscreen-toggle-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10000;
+  background: rgba(0, 123, 255, 0.9);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.fullscreen-toggle-btn:hover {
+  background: rgba(0, 123, 255, 1);
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.network-tab.fullscreen .fullscreen-toggle-btn {
+  background: rgba(220, 53, 69, 0.9);
+  z-index: 10001;
+}
+
+.network-tab.fullscreen .fullscreen-toggle-btn:hover {
+  background: rgba(220, 53, 69, 1);
+}
+
+/* Zoom buttons for network view */
+.zoom-buttons {
+  position: absolute;
+  top: 10px;
+  right: 60px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.zoom-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 123, 255, 0.9);
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  user-select: none;
+}
+
+.zoom-btn:hover {
+  background: rgba(0, 123, 255, 1);
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.zoom-btn:active {
+  transform: scale(0.95);
+}
+
+.zoom-in-btn {
+  background: rgba(40, 167, 69, 0.9);
+}
+
+.zoom-in-btn:hover {
+  background: rgba(40, 167, 69, 1);
+}
+
+.zoom-out-btn {
+  background: rgba(255, 193, 7, 0.9);
+}
+
+.zoom-out-btn:hover {
+  background: rgba(255, 193, 7, 1);
+}
+
+.zoom-reset-btn {
+  background: rgba(108, 117, 125, 0.9);
+}
+
+.zoom-reset-btn:hover {
+  background: rgba(108, 117, 125, 1);
+}
+
+/* Show zoom buttons in fullscreen mode with adjusted positioning */
+.network-tab.fullscreen .zoom-buttons {
+  position: absolute;
+  top: 20px;
+  right: 80px;
+  z-index: 10001;
+}
+
+/* Ensure network container has relative positioning for absolute zoom buttons */
+#networkContainer {
+  position: relative;
+}
+
+/* Hide sidebar and other elements when in fullscreen */
+.network-tab.fullscreen ~ .sidebar,
+.network-tab.fullscreen ~ .resize-handle {
+  display: none !important;
+}
+
+/* Ensure the network container takes full height in fullscreen */
+.network-tab.fullscreen {
+  display: flex;
+  flex-direction: column;
+}
+
+.network-tab.fullscreen .network-controls {
+  flex-shrink: 0;
+}
+
+.network-tab.fullscreen .network-container-wrapper {
+  flex: 1;
+  min-height: 0;
+}

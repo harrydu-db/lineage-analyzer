@@ -62,9 +62,13 @@ class LineageInfo:
 class ETLLineageAnalyzerSQLGlot:
     """Analyzes SQL files to extract data lineage information using SQLGlot parser"""
 
-    def __init__(self) -> None:
-        """Initialize the SQLGlot-based lineage analyzer"""
-        self.parser = SQLGlotParser()
+    def __init__(self, dialect: str = "teradata") -> None:
+        """Initialize the SQLGlot-based lineage analyzer
+        
+        Args:
+            dialect: SQL dialect to use ('teradata', 'spark', 'spark2', etc.)
+        """
+        self.parser = SQLGlotParser(dialect)
         self.logger = logging.getLogger(__name__)
 
     def extract_sql_blocks(self, content: str) -> List[str]:
@@ -147,13 +151,13 @@ class ETLLineageAnalyzerSQLGlot:
         # Convert target table
         target_table = ""
         if parsed_operation.target_table:
-            target_table = parsed_operation.target_table.full_name
+            target_table = parsed_operation.target_table.full_name.upper()
         
         # Convert source tables
         source_tables = []
         for table in parsed_operation.source_tables:
             if table.full_name:
-                source_tables.append(table.full_name)
+                source_tables.append(table.full_name.upper())
         
         # Determine operation type with more specific types
         operation_type = parsed_operation.operation_type
@@ -352,6 +356,12 @@ class ETLLineageAnalyzerSQLGlot:
             if formatted_statement not in statement_to_index:
                 statement_to_index[formatted_statement] = len(bteq_statements)
                 bteq_statements.append(formatted_statement)
+        
+        # Track which tables are views
+        view_tables = set()
+        for operation in lineage_info.operations:
+            if operation.is_view and operation.target_table:
+                view_tables.add(operation.target_table)
         
         # Initialize data structure for each table
         tables_data = {}
@@ -677,6 +687,12 @@ Examples:
   
   # Analyze a single SQL file with specific export file
   python lineage.py my_etl.sql --export lineage.json
+  
+  # Analyze Spark SQL files
+  python lineage.py spark_files/ reports/ --dialect spark
+  
+  # Analyze Spark2 SQL files
+  python lineage.py spark2_files/ reports/ --dialect spark2
         """,
     )
 
@@ -699,10 +715,17 @@ Examples:
         "--report", action="store_true", help="Show formatted report instead of JSON output (for single file mode)"
     )
 
+    parser.add_argument(
+        "--dialect",
+        default="teradata", 
+        choices=["teradata", "spark", "spark2"],
+        help="SQL dialect to use for parsing (default: teradata)"
+    )
+
     args = parser.parse_args()
 
     try:
-        analyzer = ETLLineageAnalyzerSQLGlot()
+        analyzer = ETLLineageAnalyzerSQLGlot(dialect=args.dialect)
         input_path = Path(args.input)
 
         # Check if input is a file or folder
