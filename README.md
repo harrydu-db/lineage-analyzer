@@ -8,7 +8,7 @@ A comprehensive toolkit for ETL data lineage analysis with three specialized too
 
 1. **SQL Extractor**: Extracts Teradata SQL from shell scripts
 2. **Lineage Analyzer**: Analyzes SQL files to extract data lineage using SQLGlot parser
-3. **Lineage Viewer**: Interactive HTML visualization of lineage relationships
+3. **Lineage Viewer**: Interactive React-based web application for visualizing lineage relationships
 
 ## 🚀 Quick Start
 
@@ -26,14 +26,10 @@ python src/sql_extractor/extract_sql.py your_shell_scripts/ extracted_sql/
 # Step 2: Analyze SQL files for lineage
 python src/lineage_analyzer/lineage.py extracted_sql/ lineage_reports/
 
-# Step 3: Open the interactive HTML viewer
-# Option 1: Direct file opening
-open lineage_viewer_app/lineage_viewer/index.html
-
-# Option 2: Local HTTP server (recommended)
+# Step 3: Start the React-based lineage viewer
 cd lineage_viewer_app
-python -m http.server 8000
-# Then visit http://localhost:8000/lineage_viewer/index.html
+python app.py
+# Then visit http://localhost:8000
 ```
 
 ## ✨ Features
@@ -51,12 +47,14 @@ python -m http.server 8000
 - **📝 Line Number Tracking**: Provides accurate line numbers for each operation
 - **🔄 Relationship Mapping**: Shows complete data flow between tables
 
-### 3. Lineage Viewer
-- **📋 Tables Tab**: Browse table relationships and lineage details
+### 3. Lineage Viewer (React Application)
+- **⚛️ Modern React Interface**: Built with React 19 and TypeScript for optimal performance
+- **📋 Tables Tab**: Browse table relationships and lineage details with virtualized lists
 - **🔧 Statements Tab**: View formatted SQL statements with syntax highlighting
-- **🕸️ Network View**: Interactive network visualization of data flow
-- **🔍 Search & Filter**: Find specific tables or statements quickly
+- **🕸️ Network View**: Interactive network visualization powered by vis.js
+- **🔍 Advanced Search & Filter**: Find specific tables, statements, or scripts quickly
 - **📊 Network Statistics**: Detailed insights about your data lineage network
+- **📱 Responsive Design**: Works seamlessly on desktop and mobile devices
 
 #### Advanced Network Features
 - **🎯 Direct/Indirect Mode**: Toggle between direct connections and full chain visibility
@@ -64,6 +62,7 @@ python -m http.server 8000
 - **🔍 Script Search**: Filter network by specific script names
 - **📈 Network Insights**: Statistical analysis of your data lineage network
 - **🖱️ Interactive Nodes**: Click tables to highlight connections and view details
+- **⚡ Real-time Updates**: Dynamic data loading and processing
 
 ## 📁 Supported File Types
 
@@ -94,11 +93,20 @@ INSERT INTO target.table SELECT * FROM temp.staging;
 
 ### Prerequisites
 - Python 3.10 or higher
-- Modern web browser (for HTML viewer)
+- Node.js 16+ and npm (for React development)
+- Modern web browser (Chrome, Firefox, Safari, Edge)
 
 ### Dependencies
+
+#### Python Dependencies
 ```bash
 pip install -r requirements.txt
+```
+
+#### React Dependencies
+```bash
+cd lineage_viewer_app/lineage_viewer_react
+npm install
 ```
 
 ## 📖 Usage
@@ -129,28 +137,31 @@ python src/lineage_analyzer/lineage.py my_script.sql --export lineage.json
 
 #### Step 3: Visualize Lineage Data
 
-##### Option A: Standalone HTML Viewer
-```bash
-# Option 1: Open directly in browser (may have CORS limitations)
-open lineage_viewer_app/lineage_viewer/index.html
+##### React-based Lineage Viewer (Recommended)
+The `lineage_viewer_app` provides a modern React-based web application with enhanced features and better performance.
 
-# Option 2: Run local HTTP server (recommended)
+**Build and run the React app:**
 ```bash
-cd lineage_viewer_app
-python -m http.server 8000
+# Build the React application
+cd lineage_viewer_app/lineage_viewer_react
+npm run build
+
+# Start the FastAPI server (serves the React app)
+cd ..
+python app.py
 ```
-Then open http://localhost:8000/lineage_viewer/index.html in your browser
+Then open http://localhost:8000 in your browser
 
-
-##### Option B: Lineage View App (FastAPI-based)
-The `lineage_viewer_app` provides a more robust web application with better file handling and deployment options.
-
-**Run locally:**
+**Development mode (for React development):**
 ```bash
+# Terminal 1: Start React development server
+cd lineage_viewer_app/lineage_viewer_react
+npm start
+
+# Terminal 2: Start FastAPI server for data
 cd lineage_viewer_app
 python app.py
 ```
-Then open http://localhost:8000/lineage_viewer/index.html in your browser
 
 **Deploy to Databricks Apps:**
 See the detailed deployment instructions in the [lineage_viewer_app README](lineage_viewer_app/README.md) for deploying to Databricks Apps.
@@ -163,14 +174,19 @@ See the detailed deployment instructions in the [lineage_viewer_app README](line
   - Processing summary (`processing_summary.yaml`)
   - List of all generated files (`all_lineage.txt`)
 
-### Interactive HTML Viewer
+### Interactive React Viewer
 
-1. **Load Data**: Use the file input or drag-and-drop JSON files
-2. **Browse Tables**: Click on tables to see their relationships
-3. **View Statements**: Browse formatted SQL statements
-4. **Explore Network**: Interactive network visualization with search and filtering
+1. **Load Data**: Use the file input or drag-and-drop JSON files, or load from the report folder automatically
+2. **Browse Tables**: Click on tables to see their relationships with virtualized lists for better performance
+3. **View Statements**: Browse formatted SQL statements with syntax highlighting
+4. **Explore Network**: Interactive network visualization with advanced search and filtering capabilities
+5. **Script Management**: View and filter data by specific scripts or files
 
-**Quick Load**: Add `?json=your_script_lineage.json` to the URL for direct loading.
+**Features**:
+- **Auto-loading**: Automatically loads data from the `report` folder on startup
+- **File Upload**: Manual file upload for custom lineage data
+- **Real-time Search**: Instant search across tables, statements, and scripts
+- **Responsive Design**: Works on desktop and mobile devices
 
 ## 📊 Output Formats
 
@@ -275,6 +291,7 @@ The analyzer filters out:
 - **View Locking**: Prevent accidental filter changes while moving nodes
 - **Script Search**: Filter by specific script names
 - **Table Search**: Find specific tables in the network
+- **Real-time Filtering**: Instant updates as you type
 
 ### Network Statistics
 - **Node Count**: Total number of tables
@@ -282,6 +299,13 @@ The analyzer filters out:
 - **Connection Density**: Average connections per table
 - **Isolated Tables**: Tables with no connections
 - **Hub Tables**: Tables with many connections
+- **Script Analysis**: Statistics per script file
+
+### React-Specific Features
+- **Virtualized Lists**: Smooth scrolling through large datasets
+- **Component-based Architecture**: Modular, maintainable code structure
+- **TypeScript Support**: Type-safe development and better IDE support
+- **Modern UI Components**: Clean, responsive interface design
 
 ## 📈 Example Console Report
 
@@ -382,5 +406,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built with [SQLGlot](https://github.com/tobymao/sqlglot) for SQL parsing
 - Network visualization powered by [vis.js](https://visjs.org/)
+- React application built with [Create React App](https://create-react-app.dev/)
 - Modern UI components and styling
 - Made with help from Cursor. 
