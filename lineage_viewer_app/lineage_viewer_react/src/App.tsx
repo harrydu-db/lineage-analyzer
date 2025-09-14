@@ -182,7 +182,7 @@ function App() {
       try {
         setIsLoading(true);
         // Load the all_lineage.txt file to get list of JSON files
-        const response = await fetch('/report/all_lineage.txt');
+        const response = await fetch('./report/all_lineage.txt');
         if (response.ok) {
           const text = await response.text();
           const jsonFiles = text.trim().split('\n').filter(line => line.endsWith('.json'));
@@ -192,7 +192,7 @@ function App() {
           
           for (const fileName of jsonFiles) {
             try {
-              const fileResponse = await fetch(`/report/${fileName}`);
+              const fileResponse = await fetch(`./report/${fileName}`);
               if (fileResponse.ok) {
                 const reportData = await fileResponse.json();
                 
