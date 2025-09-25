@@ -141,6 +141,10 @@ class SQLGlotParser:
                 return self._parse_delete(parsed, cleaned_sql, line_number)
             elif operation_type == "CREATE":
                 return self._parse_create(parsed, cleaned_sql, line_number)
+            elif operation_type == "CREATE_VIEW":
+                return self._parse_create(parsed, cleaned_sql, line_number)
+            elif operation_type == "CREATE_VOLATILE":
+                return self._parse_create(parsed, cleaned_sql, line_number)
             elif operation_type == "DROP":
                 return self._parse_drop(parsed, cleaned_sql, line_number)
             elif operation_type == "ALTER":
@@ -155,7 +159,9 @@ class SQLGlotParser:
             return None
     
     def _clean_sql(self, sql: str) -> str:
-        """Clean SQL statement by removing comments and extra whitespace"""
+        """Clean SQL statement by removing comments, COLLATE clauses, and TBLPROPERTIES"""
+        import re
+        
         # Remove line comments
         lines = sql.split('\n')
         cleaned_lines = []
@@ -168,7 +174,49 @@ class SQLGlotParser:
             if line.strip():
                 cleaned_lines.append(line)
         
-        return '\n'.join(cleaned_lines)
+        sql_text = '\n'.join(cleaned_lines)
+        
+        # Remove COLLATE clauses (case insensitive)
+        # Pattern matches: COLLATE UTF8_LCASE_RTRIM, COLLATE 'some_value', etc.
+        sql_text = re.sub(r'\s+COLLATE\s+[^\s,)]+', '', sql_text, flags=re.IGNORECASE)
+        
+        # Remove TBLPROPERTIES blocks
+        # TBLPROPERTIES is followed by ( then key=value pairs then )
+        sql_text = re.sub(r'\s+TBLPROPERTIES\s*\([^)]*\)', '', sql_text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove COMMENT clauses in column definitions and table definitions
+        # COMMENT is followed by a string (single or double quoted)
+        # Handle single-quoted strings
+        sql_text = re.sub(r'\s+COMMENT\s+\'[^\']*\'', '', sql_text, flags=re.IGNORECASE)
+        # Handle double-quoted strings
+        sql_text = re.sub(r'\s+COMMENT\s+\"[^\"]*\"', '', sql_text, flags=re.IGNORECASE)
+        # Handle multi-line comments with nested quotes (fallback)
+        sql_text = re.sub(r'\s+COMMENT\s+\'[^\']*(?:\'[^\']*)*\'', '', sql_text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Additional cleanup for malformed COMMENT removal
+        # Remove any remaining fragments from incomplete COMMENT removal
+        sql_text = re.sub(r'\)\s*\)\s*from\s+the\s+BIZT\s+transaction\s*\'\)', ')', sql_text, flags=re.IGNORECASE)
+        
+        # Fix double closing parentheses that might result from COMMENT removal
+        sql_text = re.sub(r'\)\s*\)\s*WITH', ') WITH', sql_text, flags=re.IGNORECASE)
+        
+        # Clean up any remaining malformed fragments from COMMENT removal
+        sql_text = re.sub(r'FROM\s+the\s+BIZT\s+TRANSACTION\s*\'\)', '', sql_text, flags=re.IGNORECASE)
+        
+        # Fix common SQL formatting issues
+        # Fix space before comma in SELECT lists: "COLUMN ," -> "COLUMN,"
+        sql_text = re.sub(r'\s+,\s*', ', ', sql_text)
+        
+        # Fix missing comma between columns on same line: "COL1 COL2" -> "COL1, COL2"
+        # This is more complex, so we'll handle it in a more targeted way
+        # Look for patterns like "WORD , WORD" and fix them
+        sql_text = re.sub(r'(\w+)\s+,\s+(\w+)', r'\1, \2', sql_text)
+        
+        # Fix PIVOT syntax issues - remove backticks around column aliases in PIVOT clauses
+        # This handles cases like: Max(CHARACTERISTICS_VALUE) AS `VALUE`
+        sql_text = re.sub(r'AS\s+`([^`]+)`', r'AS \1', sql_text, flags=re.IGNORECASE)
+        
+        return sql_text
     
     def _get_operation_type(self, parsed) -> Optional[str]:
         """Determine the SQL operation type from parsed AST"""
@@ -181,7 +229,13 @@ class SQLGlotParser:
         elif isinstance(parsed, Delete):
             return "DELETE"
         elif isinstance(parsed, Create):
-            return "CREATE"
+            # Check if it's a CREATE VIEW statement
+            if self._is_view(parsed):
+                return "CREATE_VIEW"
+            elif self._is_volatile_table(parsed):
+                return "CREATE_VOLATILE"
+            else:
+                return "CREATE"
         elif isinstance(parsed, Drop):
             return "DROP"
         elif isinstance(parsed, Alter):
@@ -262,8 +316,16 @@ class SQLGlotParser:
         is_volatile = self._is_volatile_table(parsed)
         is_view = self._is_view(parsed)
         
+        # Determine the correct operation type
+        if is_view:
+            operation_type = "CREATE_VIEW"
+        elif is_volatile:
+            operation_type = "CREATE_VOLATILE"
+        else:
+            operation_type = "CREATE"
+        
         return ParsedOperation(
-            operation_type="CREATE",
+            operation_type=operation_type,
             target_table=target_table,
             source_tables=source_tables,
             columns=self._extract_columns_from_create(parsed),
@@ -361,11 +423,8 @@ class SQLGlotParser:
         """Extract table references from INSERT statement"""
         tables = []
         
-        # Extract target table
-        if parsed.this:
-            tables.extend(self._extract_tables_from_expression(parsed.this))
-        
-        # Extract source tables from SELECT if present
+        # Only extract source tables from SELECT clause, not the target table
+        # The target table is handled separately in _extract_target_table_from_insert
         if parsed.expression:
             # If it's a SELECT statement, extract tables from it
             if isinstance(parsed.expression, Select):
@@ -373,6 +432,13 @@ class SQLGlotParser:
             else:
                 # For other expressions, extract tables recursively
                 tables.extend(self._extract_tables_from_expression(parsed.expression))
+        
+        # Also extract tables from the SELECT expressions (columns) to catch subqueries
+        if parsed.expression and isinstance(parsed.expression, Select):
+            # Extract tables from all expressions in the SELECT clause
+            if hasattr(parsed.expression, 'expressions'):
+                for expr in parsed.expression.expressions:
+                    tables.extend(self._extract_tables_from_expression(expr))
         
         return tables
     
@@ -449,13 +515,13 @@ class SQLGlotParser:
         
         # For CREATE TABLE AS SELECT, extract tables from the SELECT
         if parsed.expression:
-            # If it's a Subquery, extract the Select statement from it
-            if hasattr(parsed.expression, 'this') and hasattr(parsed.expression.this, 'args'):
-                # It's a Subquery containing a Select
-                select_stmt = parsed.expression.this
-                tables.extend(self._extract_tables_from_select(select_stmt))
+            # If it's a Subquery, extract tables from the expression inside it
+            if hasattr(parsed.expression, 'this') and parsed.expression.this:
+                # It's a Subquery containing a Select, Union, or other expression
+                inner_expr = parsed.expression.this
+                tables.extend(self._extract_tables_from_expression(inner_expr))
             else:
-                # Direct expression
+                # Direct expression (like Select, Union, etc.)
                 tables.extend(self._extract_tables_from_expression(parsed.expression))
         
         return tables

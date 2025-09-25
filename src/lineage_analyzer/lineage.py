@@ -103,7 +103,12 @@ class ETLLineageAnalyzerSQLGlot:
                 if table_operation:
                     operations.append(table_operation)
             else:
-                warnings.append(f"Failed to parse SQL statement at line {line_number}")
+                # Try fallback parsing for Teradata UPDATE FROM syntax
+                fallback_operation = self._parse_fallback_update_from(statement, line_number)
+                if fallback_operation:
+                    operations.append(fallback_operation)
+                else:
+                    warnings.append(f"Failed to parse SQL statement at line {line_number}")
         
         return operations
 
@@ -111,9 +116,26 @@ class ETLLineageAnalyzerSQLGlot:
         """Split SQL block into statements and return (statement, char_offset) tuples"""
         import re
         
-        # Remove comments
+        # Remove line comments (-- style)
         sql_clean = re.sub(r"--.*$", "", sql_block, flags=re.MULTILINE)
-        # sql_clean = re.sub(r"/\s*\*.*?\*/", "", sql_clean, flags=re.DOTALL)
+        
+        # Remove COMMENT clauses and TBLPROPERTIES to avoid semicolon issues
+        # COMMENT is followed by a string (single or double quoted)
+        # Handle single-quoted strings
+        sql_clean = re.sub(r'\s+COMMENT\s+\'[^\']*\'', '', sql_clean, flags=re.IGNORECASE)
+        # Handle double-quoted strings
+        sql_clean = re.sub(r'\s+COMMENT\s+\"[^\"]*\"', '', sql_clean, flags=re.IGNORECASE)
+        # Handle multi-line comments with nested quotes (fallback)
+        sql_clean = re.sub(r'\s+COMMENT\s+\'[^\']*(?:\'[^\']*)*\'', '', sql_clean, flags=re.IGNORECASE | re.DOTALL)
+        # TBLPROPERTIES is followed by ( then key=value pairs then )
+        sql_clean = re.sub(r'\s+TBLPROPERTIES\s*\([^)]*\)', '', sql_clean, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Additional cleanup for malformed COMMENT removal
+        # Remove any remaining fragments from incomplete COMMENT removal
+        sql_clean = re.sub(r'\)\s*for\s+[^\']*\'\)', ')', sql_clean, flags=re.IGNORECASE)
+        
+        # Fix double closing parentheses that might result from COMMENT removal
+        sql_clean = re.sub(r'\)\s*\)\s*WITH', ') WITH', sql_clean, flags=re.IGNORECASE)
         
         statements = []
         current_statement = ""
@@ -133,10 +155,42 @@ class ETLLineageAnalyzerSQLGlot:
                 statements.append((current_statement.strip(), start_offset))
                 current_statement = ""
         
+        # Handle case where there's no semicolon at the end (single statement)
         if current_statement.strip():
             statements.append((current_statement.strip(), start_offset))
         
+        # If no statements were found (no semicolons), treat the entire block as one statement
+        if not statements and sql_clean.strip():
+            statements.append((sql_clean.strip(), 0))
+        
         return statements
+
+    def _parse_fallback_update_from(self, statement: str, line_number: int) -> Optional[TableOperation]:
+        """Fallback parser for Teradata UPDATE FROM syntax when SQLGlot fails"""
+        import re
+        
+        # Check if this looks like an UPDATE FROM statement
+        update_from_match = re.search(r'UPDATE\s+([A-Za-z0-9_.]+)\s+.*?FROM\s+([A-Za-z0-9_.]+)', statement, re.IGNORECASE | re.DOTALL)
+        if not update_from_match:
+            return None
+        
+        target_table = update_from_match.group(1).upper()
+        from_table = update_from_match.group(2).upper()
+        
+        # For UPDATE FROM, both tables are sources (A -> A and B -> A)
+        source_tables = [target_table, from_table]
+        
+        return TableOperation(
+            operation_type="UPDATE",
+            target_table=target_table,
+            source_tables=source_tables,
+            columns=[],
+            conditions=[],
+            line_number=line_number,
+            sql_statement=statement,
+            is_volatile=False,
+            is_view=False
+        )
 
     def _offset_to_line_number(self, sql_block: str, offset: int) -> int:
         """Convert a character offset to a line number in the original SQL block"""
@@ -159,12 +213,8 @@ class ETLLineageAnalyzerSQLGlot:
             if table.full_name:
                 source_tables.append(table.full_name.upper())
         
-        # Determine operation type with more specific types
+        # Use the operation type from the parser (already correctly set)
         operation_type = parsed_operation.operation_type
-        if parsed_operation.is_volatile:
-            operation_type = "CREATE_VOLATILE"
-        elif parsed_operation.is_view:
-            operation_type = "CREATE_VIEW"
         
         return TableOperation(
             operation_type=operation_type,
@@ -366,11 +416,15 @@ class ETLLineageAnalyzerSQLGlot:
         # Initialize data structure for each table
         tables_data = {}
         for table in all_tables:
-            tables_data[table] = {
+            table_data = {
                 "source": [],
                 "target": [],
                 "is_volatile": table in lineage_info.volatile_tables
             }
+            # Only add is_view property if the table is actually a view (true)
+            if table in view_tables:
+                table_data["is_view"] = True
+            tables_data[table] = table_data
         
         # Process each operation to build the data flows
         for operation in lineage_info.operations:
@@ -391,10 +445,10 @@ class ETLLineageAnalyzerSQLGlot:
                 if operation_type == "UPDATE":
                     # Look for UPDATE table_name pattern in the SQL
                     import re
-                    update_match = re.search(r'UPDATE\s+(\w+)\s+FROM\s+([A-Za-z0-9_.]+)', cleaned_statement, re.IGNORECASE)
+                    update_match = re.search(r'UPDATE\s+([A-Za-z0-9_.]+)\s+FROM\s+([A-Za-z0-9_.]+)', cleaned_statement, re.IGNORECASE)
                     if update_match:
-                        # The target table is the second part (after FROM)
-                        target_table = update_match.group(2)
+                        # The target table is the first part (after UPDATE)
+                        target_table = update_match.group(1)
                     else:
                         # Try standard UPDATE table_name pattern
                         update_match = re.search(r'UPDATE\s+([A-Za-z0-9_.]+)', cleaned_statement, re.IGNORECASE)
@@ -407,6 +461,10 @@ class ETLLineageAnalyzerSQLGlot:
                 
                 # For Teradata UPDATE statements, also extract source tables using regex
                 if operation_type == "UPDATE":
+                    # Add target table to source tables for UPDATE (A -> A relationship)
+                    if target_table and target_table not in source_tables:
+                        source_tables.append(target_table)
+                    
                     # Extract tables from FROM clause using regex
                     from_match = re.search(r'FROM\s+([A-Za-z0-9_.]+)', cleaned_statement, re.IGNORECASE)
                     if from_match:
@@ -511,49 +569,6 @@ class ETLLineageAnalyzerSQLGlot:
         else:
             print(json.dumps(data, indent=2))
 
-    def export_to_bteq_sql(self, lineage_info: LineageInfo, output_file: str, original_script_path: str = None) -> None:
-        """Export SQL content to a .bteq file"""
-        import sqlparse
-        
-        # Use the provided script path or fall back to the lineage_info script_name
-        if original_script_path:
-            script_path = Path(original_script_path)
-        else:
-            script_path = Path(lineage_info.script_name)
-            
-        if not script_path.exists():
-            print(f"⚠️ Warning: Could not find original script file: {script_path}")
-            return
-        
-        # Read the original script
-        with open(script_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        
-        # For SQL files, use the content directly
-        if content.strip():
-            # Format the SQL content using sqlparse
-            formatted_sql = []
-            for statement in sqlparse.split(content):
-                formatted = sqlparse.format(
-                    statement,
-                    reindent=True,
-                    keyword_case='upper',
-                    strip_comments=False
-                )
-                formatted_sql.append(formatted.strip())
-            pretty_sql = '\n\n'.join(formatted_sql)
-            
-            # Delete existing file if it exists
-            if Path(output_file).exists():
-                Path(output_file).unlink()
-            
-            # Write to .bteq file
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(pretty_sql)
-            print(f"💾 SQL exported to: {output_file}")
-        else:
-            print(f"⚠️ Warning: No SQL content found in {script_path}")
-
     def process_folder(self, input_folder: str, output_folder: str) -> None:
         """Process all .sql files in the input folder and generate reports in the output folder"""
         input_path = Path(input_folder)
@@ -597,10 +612,6 @@ class ETLLineageAnalyzerSQLGlot:
                     / f"{script_file.stem}_{script_file.suffix[1:]}_lineage.json"
                 )
                 self.export_to_json(lineage_info, str(json_file))
-
-                # Generate BTEQ SQL file
-                bteq_file = output_path / f"{script_file.stem}.bteq"
-                self.export_to_bteq_sql(lineage_info, str(bteq_file), str(script_file))
 
                 successful_files.append(script_file.name)
                 print(f"✅ Successfully processed {script_file.name}")
@@ -704,7 +715,7 @@ Examples:
     parser.add_argument(
         "output_folder",
         nargs="?",
-        help="Output folder for reports (creates JSON and .bteq files)",
+        help="Output folder for reports (creates JSON files)",
     )
 
     parser.add_argument(
@@ -744,7 +755,7 @@ Examples:
                 lineage_info = analyzer.analyze_script(args.input)
                 analyzer.export_to_json(lineage_info, args.export)
             elif args.output_folder:
-                # Export to output folder (creates both JSON and .bteq files)
+                # Export to output folder (creates JSON file)
                 output_path = Path(args.output_folder)
                 output_path.mkdir(parents=True, exist_ok=True)
                 
@@ -756,13 +767,8 @@ Examples:
                 json_file = output_path / f"{script_name}_{script_extension}_lineage.json"
                 analyzer.export_to_json(lineage_info, str(json_file))
                 
-                # Generate BTEQ SQL file
-                bteq_file = output_path / f"{script_name}.bteq"
-                analyzer.export_to_bteq_sql(lineage_info, str(bteq_file), str(input_path))
-                
                 print(f"✅ Analysis complete! Files saved to {args.output_folder}/")
                 print(f"   • {json_file.name} - Lineage data")
-                print(f"   • {bteq_file.name} - Formatted SQL")
             else:
                 print("❌ Error: For single file mode, use --export, --report, or specify output folder")
                 sys.exit(1)

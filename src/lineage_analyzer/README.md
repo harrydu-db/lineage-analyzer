@@ -204,6 +204,87 @@ To extend the SQLGlot-based analyzer:
 
 Same as the main project - MIT License.
 
+## Known SQLGlot Issues and Limitations
+
+This section documents the specific issues encountered with the SQLGlot library during the development of this project that required workarounds.
+
+### 1. CTE (Common Table Expression) Handling
+
+**Problem Encountered**:
+- CTEs (Common Table Expressions) are being identified as source tables in lineage output
+- CTEs should be filtered out from table extraction since they're not actual database objects
+- Example: `WITH cte_name AS (...) SELECT * FROM cte_name` would extract `cte_name` as a table
+
+**Current Workaround** ❌ **REJECTED**:
+- No automated workaround implemented
+- **Manual Fix Required**: Customers need to manually edit the lineage.json file to remove CTE references from source tables
+- CTEs should be removed from the `source` arrays in the lineage output
+
+**Manual Fix Process**:
+1. Run the lineage analyzer to generate the initial lineage.json
+2. Identify CTE names in the output (typically temporary table names used in WITH clauses)
+3. Remove CTE entries from the `tables` section
+4. Remove CTE references from `source` arrays in table relationships
+5. Keep only actual database tables in the lineage output
+
+**Recommendation for SQLGlot**:
+- Add built-in CTE filtering to table extraction methods
+- CTE names should be excluded from table extraction results
+
+### 2. CREATE VIEW Operation Type Detection
+
+**Problem Encountered**:
+- CREATE VIEW statements were not being identified as views
+- All CREATE statements returned operation type "CREATE" instead of "CREATE_VIEW"
+- Missing `is_view` field in lineage JSON output
+
+**Current Workaround** ✅ **IMPLEMENTED**:
+- Enhanced `_get_operation_type()` to detect CREATE VIEW and CREATE VOLATILE
+- Added `_is_view()` and `_is_volatile_table()` helper methods
+- Updated `_convert_parsed_operation_to_table_operation()` to preserve operation types
+- Added `is_view` field to lineage JSON output
+
+**Files Modified**: `sqlglot_parser.py`, `lineage.py`
+
+### 3. Subquery Table Extraction in INSERT Statements
+
+**Problem Encountered**:
+- Tables in subqueries within SELECT expressions in INSERT statements weren't being captured
+- Example: `INSERT INTO table SELECT (SELECT col FROM subtable) FROM maintable` would only extract `maintable`
+- Subqueries in SELECT expressions are not processed recursively
+
+**Current Workaround** ✅ **IMPLEMENTED**:
+- Enhanced `_extract_tables_from_insert()` to process SELECT expressions recursively
+- Added recursive extraction for subqueries in SELECT clauses
+- Tables from subqueries are now properly captured
+
+**Files Modified**: `sqlglot_parser.py`
+
+### 4. Teradata PIVOT Syntax Support
+
+**Problem Encountered**:
+- Complex PIVOT statements failed to parse with Teradata dialect
+- Error: "Failed to parse SQL statement" for PIVOT operations
+- Required fallback to different dialect
+
+**Current Workaround** ✅ **IMPLEMENTED**:
+- Use `--dialect spark2` for files with PIVOT syntax
+- Added warning system to report parsing failures
+- Graceful degradation with error reporting
+
+**Recommendation for SQLGlot**:
+- Add comprehensive Teradata PIVOT syntax support
+- Improve error handling for unsupported syntax
+
+## Contributing to SQLGlot
+
+If you're interested in contributing fixes to the SQLGlot library, here are the key areas that would benefit from improvements based on issues encountered in this project:
+
+1. **CTE-Aware Table Extraction**: Add built-in support for filtering CTEs from table extraction
+2. **Operation Type Detection**: Add specific operation types for different CREATE variants (CREATE_VIEW, CREATE_VOLATILE)
+3. **Subquery Processing**: Improve recursive table extraction from subqueries in INSERT statements
+4. **Teradata PIVOT Support**: Add comprehensive Teradata PIVOT syntax support
+
 ## Dependencies
 
 - `sqlglot>=27.0.0`: SQL parsing and transpilation
