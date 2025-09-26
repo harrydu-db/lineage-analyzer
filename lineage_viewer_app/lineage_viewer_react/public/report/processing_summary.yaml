@@ -1,17 +1,17 @@
-# ETL Lineage Analysis Summary
-generated_on: 2025-07-13 19:27:04
-input_folder: samples
-output_folder: report
+# SQL Lineage Analysis Summary (SQLGlot Version)
+generated_on: 2025-09-26 11:21:26
+parser: SQLGlot
+input_folder: samples/source
+output_folder: samples/lineage
 
 statistics:
-  total_files_found: 3
-  successfully_processed: 3
+  total_files_found: 2
+  successfully_processed: 2
   failed_to_process: 0
   total_warnings: 0
   files_with_warnings: 0
 
 successfully_processed_files:
-  - sample.sh
-  - sample.sql
+  - sample_sh.sql
   - PRODUCT_DIM.sql
 

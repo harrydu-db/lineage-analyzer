@@ -1,21 +1,10 @@
 {
   "script_name": "PRODUCT_DIM.sql",
+  "parser_version": "SQLGlot",
   "bteq_statements": [
-    "CREATE VIEW IF NOT EXISTS PRODUCT_DIM AS\nSELECT *\nFROM BASE.PRODUCT_DIM"
+    "CREATE VIEW IF NOT EXISTS PRODUCT_DIM AS\nSELECT *\nFROM BASE.PRODUCT_DIM;"
   ],
   "tables": {
-    "PRODUCT_DIM": {
-      "source": [
-        {
-          "name": "BASE.PRODUCT_DIM",
-          "operation": [
-            0
-          ]
-        }
-      ],
-      "target": [],
-      "is_volatile": false
-    },
     "BASE.PRODUCT_DIM": {
       "source": [],
       "target": [
@@ -27,6 +16,19 @@
         }
       ],
       "is_volatile": false
+    },
+    "PRODUCT_DIM": {
+      "source": [
+        {
+          "name": "BASE.PRODUCT_DIM",
+          "operation": [
+            0
+          ]
+        }
+      ],
+      "target": [],
+      "is_volatile": false,
+      "is_view": true
     }
   },
   "warnings": []

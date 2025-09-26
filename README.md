@@ -32,6 +32,10 @@ python app.py
 # Then visit http://localhost:8000
 ```
 
+## 📋 Sample Usage
+
+See the [samples/README.md](samples/README.md) for detailed examples of how to use the tools with sample data.
+
 ## ✨ Features
 
 ### 1. SQL Extractor
