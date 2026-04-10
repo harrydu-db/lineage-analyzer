@@ -1,5 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { LineageData } from '../types/LineageData';
+import {
+  canonicalNonVolatileNodeId,
+  canonicalVolatileNodeId,
+  findTableDefinition,
+  relationshipRefName
+} from '../utils/lineageGraphUtils';
 
 interface ScriptStatisticsModalProps {
   data: LineageData;
@@ -61,12 +67,11 @@ const ScriptStatisticsModal: React.FC<ScriptStatisticsModalProps> = ({
     // PASS 1: Build all nodes with proper ownership (only for the selected script)
     const scriptData = data.scripts[scriptName];
     Object.entries((scriptData.tables || {})).forEach(([tableName, tableObj]: [string, any]) => {
-      // Table names are already uppercase and global
       let currentNodeId: string;
       if (tableObj.is_volatile) {
-        currentNodeId = `${scriptName}::${tableName}`;
+        currentNodeId = canonicalVolatileNodeId(scriptName, tableName);
       } else {
-        currentNodeId = tableName;
+        currentNodeId = canonicalNonVolatileNodeId(tableName);
       }
 
       if (!allNodes[currentNodeId]) {
@@ -92,47 +97,53 @@ const ScriptStatisticsModal: React.FC<ScriptStatisticsModalProps> = ({
 
     // PASS 2: Create edges from relationships (only for the selected script)
     Object.entries((scriptData.tables || {})).forEach(([tableName, tableObj]: [string, any]) => {
-      // Convert table name to uppercase
-      const upperTableName = tableName.toUpperCase();
       let currentNodeId: string;
       if (tableObj.is_volatile) {
-        currentNodeId = `${scriptName}::${upperTableName}`;
+        currentNodeId = canonicalVolatileNodeId(scriptName, tableName);
       } else {
-        currentNodeId = upperTableName;
+        currentNodeId = canonicalNonVolatileNodeId(tableName);
       }
 
       // Process source relationships
       if (tableObj.source) {
         tableObj.source.forEach((rel: any) => {
-          const upperRelName = rel.name.toUpperCase();
-          const sourceTableKey = `${scriptName}::${upperRelName}`;
-          let sourceTable = scriptData.tables[rel.name];
-          let sourceScript = scriptName;
-
-          if (!sourceTable) {
-            // Look for table in other scripts
-            for (const [otherScriptName, otherScriptData] of Object.entries(data.scripts || {})) {
-              if (otherScriptData.tables && otherScriptData.tables[rel.name]) {
-                sourceTable = otherScriptData.tables[rel.name];
-                sourceScript = otherScriptName;
+          const relRef = relationshipRefName(rel);
+          if (!relRef) return;
+          const upperRelName = relRef.toUpperCase();
+          let sourceTable = null;
+          let sourceScript: string | null = null;
+          const localFound = findTableDefinition(scriptData.tables, relRef);
+          if (localFound) {
+            sourceTable = localFound.table;
+            sourceScript = scriptName;
+          } else {
+            for (const [sName, sData] of Object.entries(data.scripts || {})) {
+              const otherFound = findTableDefinition(sData.tables, relRef);
+              if (otherFound) {
+                sourceTable = otherFound.table;
+                sourceScript = sName;
                 break;
               }
             }
           }
 
           let sourceNodeId: string;
-          if (sourceTable && sourceTable.is_volatile) {
-            sourceNodeId = `${sourceScript}::${upperRelName}`;
+          if (sourceTable && sourceTable.is_volatile && sourceScript) {
+            sourceNodeId = canonicalVolatileNodeId(sourceScript, relRef);
           } else {
             sourceNodeId = upperRelName;
           }
 
           if (!allNodes[sourceNodeId]) {
+            const displayName =
+              sourceTable && sourceScript
+                ? findTableDefinition(data.scripts?.[sourceScript]?.tables, relRef)?.key ?? relRef
+                : relRef;
             allNodes[sourceNodeId] = {
               id: sourceNodeId,
-              name: upperRelName,
+              name: displayName,
               is_volatile: sourceTable ? sourceTable.is_volatile : false,
-              owners: [sourceScript],
+              owners: sourceScript ? [sourceScript] : [],
               script: sourceScript
             };
           }
@@ -151,35 +162,43 @@ const ScriptStatisticsModal: React.FC<ScriptStatisticsModalProps> = ({
       // Process target relationships
       if (tableObj.target) {
         tableObj.target.forEach((rel: any) => {
-          const upperRelName = rel.name.toUpperCase();
-          const targetTableKey = `${scriptName}::${upperRelName}`;
-          let targetTable = scriptData.tables[rel.name];
-          let targetScript = scriptName;
-
-          if (!targetTable) {
-            // Look for table in other scripts
-            for (const [otherScriptName, otherScriptData] of Object.entries(data.scripts || {})) {
-              if (otherScriptData.tables && otherScriptData.tables[rel.name]) {
-                targetTable = otherScriptData.tables[rel.name];
-                targetScript = otherScriptName;
+          const relRef = relationshipRefName(rel);
+          if (!relRef) return;
+          const upperRelName = relRef.toUpperCase();
+          let targetTable = null;
+          let targetScript: string | null = null;
+          const localTarget = findTableDefinition(scriptData.tables, relRef);
+          if (localTarget) {
+            targetTable = localTarget.table;
+            targetScript = scriptName;
+          } else {
+            for (const [sName, sData] of Object.entries(data.scripts || {})) {
+              const otherTarget = findTableDefinition(sData.tables, relRef);
+              if (otherTarget) {
+                targetTable = otherTarget.table;
+                targetScript = sName;
                 break;
               }
             }
           }
 
           let targetNodeId: string;
-          if (targetTable && targetTable.is_volatile) {
-            targetNodeId = `${targetScript}::${upperRelName}`;
+          if (targetTable && targetTable.is_volatile && targetScript) {
+            targetNodeId = canonicalVolatileNodeId(targetScript, relRef);
           } else {
             targetNodeId = upperRelName;
           }
 
           if (!allNodes[targetNodeId]) {
+            const displayName =
+              targetTable && targetScript
+                ? findTableDefinition(data.scripts?.[targetScript]?.tables, relRef)?.key ?? relRef
+                : relRef;
             allNodes[targetNodeId] = {
               id: targetNodeId,
-              name: upperRelName,
+              name: displayName,
               is_volatile: targetTable ? targetTable.is_volatile : false,
-              owners: [targetScript],
+              owners: targetScript ? [targetScript] : [],
               script: targetScript
             };
           }

@@ -13,9 +13,16 @@ const convertScriptsData = (scripts: { [key: string]: any }): LineageData => {
   Object.values(scripts).forEach((scriptData: any) => {
     const scriptTables = scriptData.tables || {};
     Object.entries(scriptTables).forEach(([tableName, tableData]: [string, any]) => {
-      // Convert table name to uppercase
-      const upperTableName = tableName.toUpperCase();
-      
+      // Internal map key stays uppercase so the same logical table collides across scripts/casing.
+      const canonicalTableSuffix = tableName.toUpperCase();
+
+      const relTableName = (rel: { table?: string; name?: string }) =>
+        rel.table !== undefined && rel.table !== null && rel.table !== ''
+          ? String(rel.table)
+          : rel.name !== undefined && rel.name !== null && rel.name !== ''
+            ? String(rel.name)
+            : '';
+
       // Convert source relationships (tables this table reads from)
       const sources = (tableData.source || []).map((source: any) => {
         const sourceStatements = (source.operation || []).map((op: number) => {
@@ -27,14 +34,14 @@ const convertScriptsData = (scripts: { [key: string]: any }): LineageData => {
             line: op + 1
           };
         });
-        
+
         return {
-          table: source.name.toUpperCase(),
+          table: relTableName(source) || source.name,
           operations: (source.operation || []).map((op: number) => `${scriptData.script_name}:${op}`),
           statements: sourceStatements
         };
       });
-      
+
       // Convert target relationships (tables this table writes to)
       const targets = (tableData.target || []).map((target: any) => {
         const targetStatements = (target.operation || []).map((op: number) => {
@@ -46,18 +53,18 @@ const convertScriptsData = (scripts: { [key: string]: any }): LineageData => {
             line: op + 1
           };
         });
-        
+
         return {
-          table: target.name.toUpperCase(),
+          table: relTableName(target) || target.name,
           operations: (target.operation || []).map((op: number) => `${scriptData.script_name}:${op}`),
           statements: targetStatements
         };
       });
-      
-      // Store table with script context
-      const fullTableName = `${scriptData.script_name}::${upperTableName}`;
+
+      // Store table with script context (display name matches lineage.json keys / rel strings)
+      const fullTableName = `${scriptData.script_name}::${canonicalTableSuffix}`;
       tables[fullTableName] = {
-        name: upperTableName,
+        name: tableName,
         owner: 'unknown',
         isVolatile: tableData.is_volatile || false,
         isView: tableData.is_view || false,
@@ -114,14 +121,15 @@ const convertScriptsData = (scripts: { [key: string]: any }): LineageData => {
     Object.entries(scriptData.tables || {}).forEach(([tableName, tableData]: [string, any]) => {
       // Only merge properties for non-volatile tables (volatile tables are script-specific)
       if (!tableData.is_volatile) {
-        if (!mergedTableProperties[tableName]) {
-          mergedTableProperties[tableName] = {
+        const mergeKey = tableName.toUpperCase();
+        if (!mergedTableProperties[mergeKey]) {
+          mergedTableProperties[mergeKey] = {
             isView: false
           };
         }
         // If any definition has is_view: true, treat the table as a view
         if (tableData.is_view) {
-          mergedTableProperties[tableName].isView = true;
+          mergedTableProperties[mergeKey].isView = true;
         }
       }
     });
@@ -132,8 +140,8 @@ const convertScriptsData = (scripts: { [key: string]: any }): LineageData => {
     const tableName = tables[tableKey].name;
     const tableData = tables[tableKey];
     // Only apply merging to non-volatile tables
-    if (!tableData.isVolatile && mergedTableProperties[tableName]) {
-      tables[tableKey].isView = mergedTableProperties[tableName].isView;
+    if (!tableData.isVolatile && mergedTableProperties[tableName.toUpperCase()]) {
+      tables[tableKey].isView = mergedTableProperties[tableName.toUpperCase()].isView;
     }
   });
   

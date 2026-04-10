@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { displayTableNameFromLineageScripts } from '../../utils/lineageGraphUtils';
 
 interface NetworkControlsProps {
   selectedScript: string | null;
@@ -13,6 +14,8 @@ interface NetworkControlsProps {
   onShowStatistics: () => void;
   availableScripts?: string[];
   availableTables?: string[];
+  /** Raw scripts.tables keys used to show lineage-accurate casing in the Filter line */
+  lineageScripts?: Record<string, any>;
   onTableSearch?: (tableName: string) => void;
   selectedTableFilters?: string[];
   onClearAll?: () => void;
@@ -31,6 +34,7 @@ const NetworkControls: React.FC<NetworkControlsProps> = ({
   onShowStatistics,
   availableScripts = [],
   availableTables = [],
+  lineageScripts,
   onTableSearch,
   selectedTableFilters = [],
   onClearAll
@@ -335,6 +339,16 @@ const NetworkControls: React.FC<NetworkControlsProps> = ({
     }
   };
 
+  const displayTableFilterLabel = (filter: string) => {
+    if (lineageScripts) {
+      return displayTableNameFromLineageScripts(lineageScripts, filter);
+    }
+    const exact = availableTables.find((t) => t === filter);
+    if (exact) return exact;
+    const ci = availableTables.find((t) => t.toUpperCase() === filter.toUpperCase());
+    return ci ?? filter;
+  };
+
   // Generate filter display text
   const generateFilterText = () => {
     let filterText = 'Filter: ';
@@ -351,7 +365,8 @@ const NetworkControls: React.FC<NetworkControlsProps> = ({
       if (hasFilters) {
         filterText += ', ';
       }
-      filterText += `Tables: [${selectedTableFilters.join(', ')}]`;
+      const tableLabels = selectedTableFilters.map(displayTableFilterLabel);
+      filterText += `Tables: [${tableLabels.join(', ')}]`;
       hasFilters = true;
     }
     

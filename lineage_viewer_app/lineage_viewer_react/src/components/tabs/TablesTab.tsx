@@ -10,6 +10,14 @@ interface TablesTabProps {
   onTableSelect: (tableName: string | null) => void;
 }
 
+/** Stable row id: volatile uses script::NAME (upper), global tables use NAME (upper) for dedup/match. */
+function tablesTabRowKey(table: { name: string; script?: string; isVolatile: boolean }): string {
+  if (table.isVolatile && table.script) {
+    return `${table.script}::${table.name.toUpperCase()}`;
+  }
+  return table.name.toUpperCase();
+}
+
 const TablesTab: React.FC<TablesTabProps> = ({ data, selectedTable, onTableSelect }) => {
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
@@ -63,16 +71,8 @@ const TablesTab: React.FC<TablesTabProps> = ({ data, selectedTable, onTableSelec
     // For volatile tables: keep separate entries per script (not global)
     // For non-volatile tables: deduplicate by table name (global)
     const uniqueTables = new Map();
-    Object.values(data.tables).forEach(table => {
-      let key: string;
-      if (table.isVolatile) {
-        // Volatile tables are script-specific, use script::table as key
-        key = table.script ? `${table.script}::${table.name}` : table.name;
-      } else {
-        // Non-volatile tables are global, use just table name as key
-        key = table.name;
-      }
-      
+    Object.values(data.tables).forEach((table) => {
+      const key = tablesTabRowKey(table);
       if (!uniqueTables.has(key)) {
         uniqueTables.set(key, table);
       }
@@ -167,10 +167,7 @@ const TablesTab: React.FC<TablesTabProps> = ({ data, selectedTable, onTableSelec
             borderRadius: '4px'
           }}>
             {filteredTables.map((table) => {
-              // Use the same key logic as in the deduplication
-              const tableKey = table.isVolatile && table.script 
-                ? `${table.script}::${table.name}` 
-                : table.name;
+              const tableKey = tablesTabRowKey(table);
               return (
                 <div
                   key={tableKey}
@@ -221,16 +218,16 @@ const TablesTab: React.FC<TablesTabProps> = ({ data, selectedTable, onTableSelec
       
       <div className="content-area">
         {selectedTable ? (
-          <TableUsageDetails 
-            table={filteredTables.find(t => {
-              const tableKey = t.isVolatile && t.script ? `${t.script}::${t.name}` : t.name;
-              return tableKey === selectedTable;
-            }) || Object.values(data.tables).find(t => {
-              const tableKey = t.isVolatile && t.script ? `${t.script}::${t.name}` : t.name;
-              return tableKey === selectedTable;
-            })}
-            data={data}
-          />
+          (() => {
+            const resolved =
+              filteredTables.find((t) => tablesTabRowKey(t) === selectedTable) ||
+              Object.values(data.tables).find((t) => tablesTabRowKey(t) === selectedTable);
+            return resolved ? (
+              <TableUsageDetails table={resolved} data={data} />
+            ) : (
+              <LoadingMessage />
+            );
+          })()
         ) : (
           <LoadingMessage />
         )}

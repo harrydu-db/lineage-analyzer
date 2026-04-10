@@ -20,6 +20,8 @@ interface ExpandedScripts {
   [scriptName: string]: boolean;
 }
 
+const sameLogicalTable = (a: string, b: string) => a.toUpperCase() === b.toUpperCase();
+
 const TableUsageDetails: React.FC<TableUsageDetailsProps> = ({ table, data }) => {
   const [activeTab, setActiveTab] = useState<'source' | 'target'>('source');
   const [expandedScripts, setExpandedScripts] = useState<ExpandedScripts>({});
@@ -55,7 +57,7 @@ const TableUsageDetails: React.FC<TableUsageDetailsProps> = ({ table, data }) =>
     Object.entries(data.tables).forEach(([tableKey, tableData]) => {
       if (tableData.sources) {
         tableData.sources.forEach(source => {
-          if (source.table === table.name) {
+          if (sameLogicalTable(source.table, table.name)) {
             // This table is used as a source by tableData
             const scriptName = tableData.script || 'Unknown';
             
@@ -99,7 +101,7 @@ const TableUsageDetails: React.FC<TableUsageDetailsProps> = ({ table, data }) =>
     Object.entries(data.tables).forEach(([tableKey, tableData]) => {
       if (tableData.targets) {
         tableData.targets.forEach(target => {
-          if (target.table === table.name) {
+          if (sameLogicalTable(target.table, table.name)) {
             // This table is used as a target by tableData
             const scriptName = tableData.script || 'Unknown';
             

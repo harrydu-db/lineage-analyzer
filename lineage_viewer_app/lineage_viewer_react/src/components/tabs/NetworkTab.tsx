@@ -6,6 +6,12 @@ import NetworkControls from './NetworkControls';
 import NetworkModal from '../NetworkModal';
 import NetworkStatistics from '../NetworkStatistics';
 import './NetworkTab.css';
+import {
+  canonicalNonVolatileNodeId,
+  canonicalVolatileNodeId,
+  findTableDefinition,
+  relationshipRefName
+} from '../../utils/lineageGraphUtils';
 
 interface NetworkTabProps {
   data: LineageData;
@@ -106,15 +112,12 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
       console.log(`Processing script: ${scriptName}`, scriptData);
       Object.entries(scriptData.tables || {}).forEach(([tableName, tableObj]: [string, any]) => {
         console.log(`  Processing table: ${tableName}`, tableObj);
-        // Table names are already uppercase and global
-        // Determine node ID based on volatility
+        // Canonical IDs are uppercase so PASS 2 edges match; label keeps JSON key casing.
         let nodeId: string;
         if (tableObj.is_volatile) {
-          // Volatile tables are script-specific
-          nodeId = `${scriptName}::${tableName}`;
+          nodeId = canonicalVolatileNodeId(scriptName, tableName);
         } else {
-          // Non-volatile tables are global
-          nodeId = tableName;
+          nodeId = canonicalNonVolatileNodeId(tableName);
         }
         
         // Create or update node
@@ -131,7 +134,7 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
             }
           }
         } else {
-          // Create new node
+          // Create new node (name = casing from this script's tables key in lineage JSON)
           allNodes[nodeId] = {
             id: nodeId,
             name: tableName,
@@ -154,14 +157,13 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
       console.log(`PASS 2 - Processing script: ${scriptName}`);
       Object.entries(scriptData.tables || {}).forEach(([tableName, tableObj]: [string, any]) => {
         console.log(`PASS 2 - Processing table: ${tableName}`, tableObj);
-        // Convert table name to uppercase
         const upperTableName = tableName.toUpperCase();
         // Determine current node ID
         let currentNodeId: string;
         if (tableObj.is_volatile) {
-          currentNodeId = `${scriptName}::${upperTableName}`;
+          currentNodeId = canonicalVolatileNodeId(scriptName, tableName);
         } else {
-          currentNodeId = upperTableName;
+          currentNodeId = canonicalNonVolatileNodeId(tableName);
         }
         
         // Process source relationships
@@ -171,25 +173,24 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
             console.log(`  Processing source relationship:`, rel);
             // Convert relationship table name to uppercase
             // Handle both formats: {table: 'name'} and {name: 'name'}
-            const tableName = rel.table || rel.name;
-            if (!rel || !tableName) {
+            const relTableRef = relationshipRefName(rel);
+            if (!rel || relTableRef === undefined) {
               console.warn(`  Skipping source relationship - missing table/name:`, rel);
               return;
             }
-            const upperRelName = tableName.toUpperCase();
-            // Find source table - prioritize same script first
+            const upperRelName = relTableRef.toUpperCase();
+            // Find source table (case-insensitive key match vs lineage JSON)
             let sourceTable = null;
             let sourceScript = null;
-            
-            // First, try to find the table in the current script
-            if (scriptData.tables && scriptData.tables[tableName]) {
-              sourceTable = scriptData.tables[tableName];
+            const localFound = findTableDefinition(scriptData.tables, relTableRef);
+            if (localFound) {
+              sourceTable = localFound.table;
               sourceScript = scriptName;
             } else {
-              // If not found in current script, look in other scripts
               for (const [sName, sData] of Object.entries(data.scripts || {})) {
-                if (sData.tables && sData.tables[tableName]) {
-                  sourceTable = sData.tables[tableName];
+                const otherFound = findTableDefinition(sData.tables, relTableRef);
+                if (otherFound) {
+                  sourceTable = otherFound.table;
                   sourceScript = sName;
                   break;
                 }
@@ -198,22 +199,25 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
             
             // Determine source node ID
             let sourceNodeId: string;
-            if (sourceTable && sourceTable.is_volatile) {
-              sourceNodeId = `${sourceScript}::${upperRelName}`;
+            if (sourceTable && sourceTable.is_volatile && sourceScript) {
+              sourceNodeId = canonicalVolatileNodeId(sourceScript, relTableRef);
             } else {
               sourceNodeId = upperRelName;
             }
             
             // Create node for referenced table if it doesn't exist
             if (!allNodes[sourceNodeId]) {
+              const displayName = sourceTable && sourceScript
+                ? (findTableDefinition(data.scripts?.[sourceScript]?.tables, relTableRef)?.key ?? relTableRef)
+                : relTableRef;
               allNodes[sourceNodeId] = {
                 id: sourceNodeId,
-                name: upperRelName,
+                name: displayName,
                 is_volatile: sourceTable ? sourceTable.is_volatile : false,
                 owners: sourceTable ? [sourceScript] : [],
                 source: sourceTable ? (sourceTable.source || []) : [],
                 target: sourceTable ? (sourceTable.target || []) : [],
-                properties: sourceTable ? { ...sourceTable, script_name: sourceScript } : { name: upperRelName }
+                properties: sourceTable ? { ...sourceTable, script_name: sourceScript } : { name: displayName }
               };
             }
             
@@ -255,25 +259,23 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
             console.log(`  Processing target relationship:`, rel);
             // Convert relationship table name to uppercase
             // Handle both formats: {table: 'name'} and {name: 'name'}
-            const tableName = rel.table || rel.name;
-            if (!rel || !tableName) {
+            const relTableRef = relationshipRefName(rel);
+            if (!rel || relTableRef === undefined) {
               console.warn(`  Skipping target relationship - missing table/name:`, rel);
               return;
             }
-            const upperRelName = tableName.toUpperCase();
-            // Find target table - prioritize same script first
+            const upperRelName = relTableRef.toUpperCase();
             let targetTable = null;
             let targetScript = null;
-            
-            // First, try to find the table in the current script
-            if (scriptData.tables && scriptData.tables[tableName]) {
-              targetTable = scriptData.tables[tableName];
+            const localTarget = findTableDefinition(scriptData.tables, relTableRef);
+            if (localTarget) {
+              targetTable = localTarget.table;
               targetScript = scriptName;
             } else {
-              // If not found in current script, look in other scripts
               for (const [sName, sData] of Object.entries(data.scripts || {})) {
-                if (sData.tables && sData.tables[tableName]) {
-                  targetTable = sData.tables[tableName];
+                const otherTarget = findTableDefinition(sData.tables, relTableRef);
+                if (otherTarget) {
+                  targetTable = otherTarget.table;
                   targetScript = sName;
                   break;
                 }
@@ -282,22 +284,25 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
             
             // Determine target node ID
             let targetNodeId: string;
-            if (targetTable && targetTable.is_volatile) {
-              targetNodeId = `${targetScript}::${upperRelName}`;
+            if (targetTable && targetTable.is_volatile && targetScript) {
+              targetNodeId = canonicalVolatileNodeId(targetScript, relTableRef);
             } else {
               targetNodeId = upperRelName;
             }
             
             // Create node for referenced table if it doesn't exist
             if (!allNodes[targetNodeId]) {
+              const displayName = targetTable && targetScript
+                ? (findTableDefinition(data.scripts?.[targetScript]?.tables, relTableRef)?.key ?? relTableRef)
+                : relTableRef;
               allNodes[targetNodeId] = {
                 id: targetNodeId,
-                name: upperRelName,
+                name: displayName,
                 is_volatile: targetTable ? targetTable.is_volatile : false,
                 owners: targetTable ? [targetScript] : [],
                 source: targetTable ? (targetTable.source || []) : [],
                 target: targetTable ? (targetTable.target || []) : [],
-                properties: targetTable ? { ...targetTable, script_name: targetScript } : { name: upperRelName }
+                properties: targetTable ? { ...targetTable, script_name: targetScript } : { name: displayName }
               };
             }
             
@@ -359,7 +364,8 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
       
       // Add nodes that match the table filter from ALL nodes
       Object.entries(allNodes).forEach(([nodeId, node]) => {
-        if (tableFilters.includes(node.name)) {
+        const nodeName = node.name as string;
+        if (tableFilters.some((f) => f.toUpperCase() === (nodeName || '').toUpperCase())) {
           matchingNodeIds.add(nodeId);
           relatedNodeIds!.add(nodeId);
         }
@@ -525,13 +531,19 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
 
   const availableTables = React.useMemo(() => {
     if (!data || !data.scripts) return [];
-    const tableNames = new Set<string>();
+    // One entry per logical table; keep casing from lineage.json (first occurrence wins).
+    const displayByCanonical = new Map<string, string>();
     Object.values(data.scripts).forEach((script: any) => {
-      Object.keys(script.tables || {}).forEach(tableName => {
-        tableNames.add(tableName.toUpperCase());
+      Object.keys(script.tables || {}).forEach((tableName) => {
+        const canon = tableName.toUpperCase();
+        if (!displayByCanonical.has(canon)) {
+          displayByCanonical.set(canon, tableName);
+        }
       });
     });
-    return Array.from(tableNames).sort();
+    return Array.from(displayByCanonical.values()).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' })
+    );
   }, [data]);
 
   // Search callback functions
@@ -1104,6 +1116,7 @@ const NetworkTab: React.FC<NetworkTabProps> = ({
           onShowStatistics={() => setShowStatistics(!showStatistics)}
           availableScripts={availableScripts}
           availableTables={availableTables}
+          lineageScripts={data.scripts}
           onTableSearch={handleTableSearch}
           selectedTableFilters={selectedTableFilters}
           onClearAll={clearAllFilters}
